@@ -57,7 +57,7 @@ param
 	[String]$SortBy,
 	
 	[Parameter(ParameterSetName='List',Mandatory=$false,HelpMessage="Maximum number of returned accounts. If not specified, the default value is 50. The maximum number that can be specified is 1000")]
-	[int]$Limit = 50,
+	[int]$Limit = 100,
 	
 	[Parameter(ParameterSetName='List',Mandatory=$false,HelpMessage="If used, the next page is automatically returned")]
 	[switch]$AutoNextPage,
@@ -84,8 +84,8 @@ $URL_Logoff = $URL_Authentication+"/Logoff"
 
 # URL Methods
 # -----------
-$URL_Accounts = $URL_PVWAAPI+"/Accounts"
-$URL_AccountsDetails = $URL_PVWAAPI+"/Accounts/{0}"
+$url_users = $URL_PVWAAPI+"/Users"
+$url_usersDetails = $URL_PVWAAPI+"/Users/{0}"
 $URL_Platforms = $URL_PVWAAPI+"/Platforms/{0}"
 
 
@@ -99,8 +99,7 @@ $rstusername = $rstpassword = ""
 $logonToken  = ""
 
 #region Functions
-Function Test-CommandExists
-{
+Function Test-CommandExists {
     Param ($command)
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = 'stop'
@@ -128,8 +127,7 @@ Function Convert-Date($epochdate)
 	else {return (Get-Date -Date "01/01/1970").AddSeconds($epochdate)}
 }
 
-Function Create-SearchCriteria
-{
+Function Create-SearchCriteria {
 	param ([string]$sURL, [string]$sSearch, [string]$sSortParam, [string]$sSafeName, [int]$iLimitPage, [int]$iOffsetPage)
 	[string]$retURL = $sURL
 	$retURL += "?"
@@ -183,7 +181,7 @@ If (Test-CommandExists Invoke-RestMethod)
 #region [Logon]
     # Get Credentials to Login
     # ------------------------
-    $caption = "Get accounts"
+    $caption = "Get CyberArk Users"
     $msg = "Enter your User name and Password"; 
     $creds = $Host.UI.PromptForCredential($caption,$msg,"","")
 	if ($null -ne $creds)
@@ -228,7 +226,7 @@ If (Test-CommandExists Invoke-RestMethod)
 			
 			try {
 				$AccountsURLWithFilters = ""
-				$AccountsURLWithFilters = $(Create-SearchCriteria -sURL $URL_Accounts -sSearch $Keywords -sSortParam $SortBy -sSafeName $SafeName -iLimitPage $Limit)
+				$AccountsURLWithFilters = $(Create-SearchCriteria -sURL $url_users -sSearch $Keywords -sSortParam $SortBy -sSafeName $SafeName -iLimitPage $Limit)
 				Write-Debug $AccountsURLWithFilters
 			} catch {
 				Write-Error $_.Exception
@@ -239,10 +237,9 @@ If (Test-CommandExists Invoke-RestMethod)
 				Write-Error $_.Exception.Response.StatusDescription
 			}
 						
-			If ($AutoNextPage)
-			{
+			If ($AutoNextPage) {
 				$GetAccountsList = @()
-				$GetAccountsList += $GetAccountsResponse.value
+				$GetAccountsList += $GetAccountsResponse.users
 				Write-Debug $GetAccountsList.count
 				$nextLink =  $GetAccountsResponse.nextLink
 				Write-Debug $nextLink
@@ -257,18 +254,17 @@ If (Test-CommandExists Invoke-RestMethod)
 				}
 				Write-Host "Showing $($GetAccountsList.count) accounts"
 				$response = $GetAccountsList
-			}
-			else 
-			{
+			} else {
+				write-debug $GetAccountsResponse.count
 				Write-Host "Showing up to $Limit accounts" 
-				$response = $GetAccountsResponse.value
+				$response = $GetAccountsResponse.Users
 			}
 		}
 		"Details"
 		{
 			if($AccountID -ne "")
 			{
-				$GetAccountDetailsResponse = Invoke-RestMethod -Method Get -Uri $($URL_AccountsDetails -f $AccountID) -Headers $logonHeader -ContentType "application/json" -TimeoutSec 2700
+				$GetAccountDetailsResponse = Invoke-RestMethod -Method Get -Uri $($url_usersDetails -f $AccountID) -Headers $logonHeader -ContentType "application/json" -TimeoutSec 2700
 				$response = $GetAccountDetailsResponse
 			}
 		}
