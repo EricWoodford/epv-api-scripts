@@ -1,7 +1,9 @@
 <#
-    Creates CyberArk vaules based off AD Accounts
+    Creates CyberArk vaults based off AD Accounts
     
 #>
+
+
 [CmdletBinding()]
 [OutputType()]
 Param
@@ -9,12 +11,11 @@ Param
     [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
     [string[]]$NewUserSMTP,
     [Parameter(Mandatory = $false, ValueFromPipelineByPropertyName = $true)]
-    $MemberRole = "EndUser"
+    $MemberRole = "Owner"
 )
 
 
-Function Get-LogonHeader
-{
+Function Get-LogonHeader {
     <# 
 .SYNOPSIS 
 	Get-LogonHeader
@@ -479,6 +480,152 @@ Set-SafeMember -safename "Win-Local-Admins" -safeMember "Administrator" -memberS
     }
 }
 
+Function Set-MemberRole {
+    param (
+        [Parameter(Mandatory = $true)]
+        [String]$safeName,
+        [Parameter(Mandatory = $true)]
+        [string]$memberRole,
+        [Parameter(Mandatory = $true)]
+        [string]$SafeUser,
+        [Parameter(Mandatory = $false, ValueFromPipelineByPropertyName = $true)]
+        [switch]$updateMember,
+        [Parameter(Mandatory = $false, ValueFromPipelineByPropertyName = $true)]
+        [switch]$deleteMember
+    )
+
+    #End-user's Permissions configuration defined by CyberArk 
+    $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permAddAccounts = $permUpdateAccountContent = $permUpdateAccountProperties = $permInitiateCPMManagement = `
+        $permSpecifyNextAccountContent = $permRenameAccounts = $permDeleteAccounts = $permUnlockAccounts = $permManageSafe = $permManageSafeMembers = $permBackupSafe = $permViewAuditLog = `
+        $permViewSafeMembers = $permAccessWithoutConfirmation = $permCreateFolders = $permDeleteFolders = $permMoveAccountsAndFolders = $false
+    [int]$permRequestsAuthorizationLevel = 0
+    
+    switch ($MemberRole) {
+        "Admin"
+        {
+            $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permAddAccounts = $permUpdateAccountContent = $permUpdateAccountProperties = $permInitiateCPMManagement = `
+                $permSpecifyNextAccountContent = $permRenameAccounts = $permDeleteAccounts = $permUnlockAccounts = $permManageSafe = $permManageSafeMembers = $permBackupSafe = `
+                $permViewAuditLog = $permViewSafeMembers = $permAccessWithoutConfirmation = $permCreateFolders = $permDeleteFolders = $permMoveAccountsAndFolders = $true
+            $permRequestsAuthorizationLevel = 1
+        }
+        "Auditor"
+        {
+            $permListAccounts = $permViewAuditLog = $permViewSafeMembers = $true
+        }
+        "EndUser"
+        {
+            $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permViewAuditLog = $permViewSafeMembers = $true
+        }
+        "Approver"
+        {
+            $permListAccounts = $permViewAuditLog = $permViewSafeMembers = $true
+            $permRequestsAuthorizationLevel = 1
+        }
+        "Owner"
+        {
+            $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permAddAccounts = $permUpdateAccountContent = $permUpdateAccountProperties = $permInitiateCPMManagement = $permSpecifyNextAccountContent = $permRenameAccounts = $permDeleteAccounts = $permUnlockAccounts = $permManageSafeMembers = $permViewAuditLog = $permViewSafeMembers = $permMoveAccountsAndFolders = $true
+            $permRequestsAuthorizationLevel = 1
+        }
+        "CDT_Admin" {
+            $permManageSafe = $permManageSafeMembers = $permBackupSafe = $permViewAuditLog =  $permViewSafeMembers = $true
+        }
+    }
+    Set-SafeMember -safename $SafeName -safeMember $SafeUser -memberSearchInLocation $UserLocation `
+        -permUseAccounts $permUseAccounts -permRetrieveAccounts $permRetrieveAccounts -permListAccounts $permListAccounts `
+        -permAddAccounts $permAddAccounts -permUpdateAccountContent $permUpdateAccountContent -permUpdateAccountProperties $permUpdateAccountProperties `
+        -permInitiateCPMManagement $permInitiateCPMManagement -permSpecifyNextAccountContent $permSpecifyNextAccountContent `
+        -permRenameAccounts $permRenameAccounts -permDeleteAccounts $permDeleteAccounts -permUnlockAccounts $permUnlockAccounts `
+        -permManageSafe $permManageSafe -permManageSafeMembers $permManageSafeMembers -permBackupSafe $permBackupSafe `
+        -permViewAuditLog $permViewAuditLog -permViewSafeMembers $permViewSafeMembers `
+        -permRequestsAuthorizationLevel $permRequestsAuthorizationLevel -permAccessWithoutConfirmation $permAccessWithoutConfirmation `
+        -permCreateFolders $permCreateFolders -permDeleteFolders $permDeleteFolders -permMoveAccountsAndFolders $permMoveAccountsAndFolders
+
+}
+
+Function Create-SearchCriteria {
+	param ([string]$sURL, [string]$sSearch, [string]$sSortParam, [string]$sSafeName, [int]$iLimitPage, [int]$iOffsetPage)
+	[string]$retURL = $sURL
+	$retURL += "?"
+	
+	if(![string]::IsNullOrEmpty($sSearch))
+	{
+		write-debug "Search: $sSearch"
+		$retURL += "search=$(Encode-URL $sSearch)&"
+	}
+	if(![string]::IsNullOrEmpty($sSafeName))
+	{
+		write-debug "Safe: $sSafeName"
+		$retURL += "filter=safename eq $(Encode-URL $sSafeName)&"
+	}
+	if(![string]::IsNullOrEmpty($sSortParam))
+	{
+		write-debug "Sort: $sSortParam"
+		$retURL += "sort=$(Encode-URL $sSortParam)&"
+	}
+	if($iLimitPage -gt 0)
+	{
+		write-debug "Limit: $iLimitPage"
+		$retURL += "limit=$iLimitPage&"
+	}
+		
+	if($retURL[-1] -eq '&') { $retURL = $retURL.substring(0,$retURL.length-1) }
+	write-debug "URL: $retURL"
+	
+	return $retURL
+}
+
+Function Encode-URL($sText)
+{
+	if ($sText.Trim() -ne "")
+	{
+		write-debug "Returning URL Encode of $sText"
+		return [System.Web.HttpUtility]::UrlEncode($sText.Trim())
+	}
+	else
+	{
+		return ""
+	}
+}
+
+
+function get-CYUser {
+    param (        
+        [Parameter(Mandatory = $true)]
+        [string]$SafeUser,
+        [Parameter(Mandatory = $false)]
+        [String]$safeName, 
+        [Parameter(Mandatory = $false)]
+        [string]$SortBy,
+        [Parameter(Mandatory = $false)]
+        [int]$limit=10
+    )
+
+    try {
+        $AccountsURLWithFilters = ""
+        $AccountsURLWithFilters = $(Create-SearchCriteria -sURL $url_users -sSearch $SafeUser -sSortParam $SortBy -sSafeName $SafeName -iLimitPage $Limit)
+        Write-Debug $AccountsURLWithFilters
+    } catch {
+        Write-Error $_.Exception
+    }
+    try{
+        $GetAccountsResponse = Invoke-RestMethod -Method Get -Uri $AccountsURLWithFilters -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700
+    } catch {
+        Write-Error $_.Exception.Response.StatusDescription
+    }
+    return $GetAccountsResponse.users
+}
+
+function get-SpoofedADUser {
+    param (        
+        [string]$SafeUser
+    )
+    $getCYArkUser = get-CYUser -SafeUser $SafeUser
+    if ($null -eq $getCYArkUser) { return $null} else {
+        $ADLookAlike = $getCYArkUser | Select-Object @{Name="UserPrincipalName";Expression={$_.username}},@{name="surName";Expression={$_.personalDetails.FirstName}},@{Name="GivenName";Expression={$_.Personaldetails.LastName}}
+        return $ADLookAlike
+    }
+}
+
 Function Get-SafeMembers {
     <#
 .SYNOPSIS
@@ -511,6 +658,7 @@ Get-SafeMember -safename "Win-Local-Admins"
 	
     return $_safeOwners
 }
+
 Function Convert-ToBool
 {
     param (
@@ -533,7 +681,7 @@ Function Convert-ToBool
 #endregion
 
 # Script Version
-$ScriptVersion = "1.9.1"
+$ScriptVersion = "1.0.0" 
 
 # ------ SET global parameters ------
 # Set a global Header Token parameter
@@ -543,6 +691,11 @@ $global:g_SafesList = $null
 # Set a global list of all Default sues to ignore
 $global:g_DefaultUsers = @("Master", "Batch", "Backup Users", "Auditors", "Operators", "DR Users", "Notification Engines", "PVWAGWAccounts", "PVWAGWUser", "PVWAAppUser", "PasswordManager")
 
+## TDC Specific values:
+# ----------------------
+$defaultDomain = "tdc.ad.teale.ca.gov"
+$pvWAURL = "https://cdt.privilegecloud.cyberark.com/PasswordVault"
+
 # Global URLS
 # -----------
 $URL_PVWAWebServices = $PVWAURL + "/WebServices"
@@ -550,6 +703,7 @@ $URL_PVWABaseAPI = $URL_PVWAWebServices + "/PIMServices.svc"
 $URL_CyberArkAuthentication = $URL_PVWAWebServices + "/auth/cyberark/CyberArkAuthenticationService.svc"
 $URL_Logon = $URL_CyberArkAuthentication + "/Logon"
 $URL_Logoff = $URL_CyberArkAuthentication + "/Logoff"
+$URL_PVWAAPI = $PVWAURL+"/api"
 
 # URL Methods
 # -----------
@@ -557,13 +711,14 @@ $URL_Safes = $URL_PVWABaseAPI + "/Safes"
 $URL_SpecificSafe = $URL_Safes + "/{0}"
 $URL_SafeMembers = $URL_SpecificSafe + "/Members"
 $URL_SafeSpecificMember = $URL_SpecificSafe + "/Members/{1}"
+# users
+$url_users = $URL_PVWAAPI+"/Users"
 
-
-
-## TDC Specific values:
-# ----------------------
-$defaultDomain = "tdc.ad.teale.ca.gov"
-$pvWAURL = "https://cdt.privilegecloud.cyberark.com/PasswordVault"
+$useActiveDirectory = $true
+if ($null -eq (Get-Module -Name "ActiveDirectory")) {
+    write-host "This script uses the ActiveDirectory powershell module to read properties from live mailboxes"
+    $useActiveDirectory = $false
+}
 
 
 if ($null -eq $mgmtAdminUser) {
@@ -580,7 +735,11 @@ if ($null -eq $allSafes) {
 forEach ($UserSMTP in $NewUserSMTP ) {
     $filterString = "userprincipalname -eq '"+$UserSMTP+"'"
     # Find User Object in Active Directory to grab user object. 
-    $newuser = Get-ADUser -Server $defaultDomain -Filter $filterString # -Credential $mgmtAdminUser    
+    if ($useActiveDirectory) {
+        $newuser = Get-ADUser -Server $defaultDomain -Filter $filterString # -Credential $mgmtAdminUser    
+    } else {
+        $newUser = get-SpoofedADUser -SafeUser $UserSMTP
+    }
 
     #Build SafeName from the AD Object properties.
     $SafeName = "P-"+$newuser.GivenName+"_"+$newuser.Surname;
@@ -590,15 +749,23 @@ forEach ($UserSMTP in $NewUserSMTP ) {
     $SafeExists = $AllSafes | Where-Object {$_.safename -eq $SafeName}
     if ($null -eq $SafeExists)  {
         # Create new Safe For user.
-        #$ManagingCPMArray = & '.\Safe Management\Safe-Management.ps1' -PVWAURL $pvWAURL -list | ?{$_.managingCPM -like "CDT*"} | group-object managingCPM | Sort-Object count 
-
+        
         #Look for lowest population CPM server. 
         $ManagingCPMArray = $allSafes | Where-Object {$_.managingCPM -like "CDT*"} | group-object managingCPM -NoElement | Sort-Object count 
         $lowestPopManagingCPM = $ManagingCPMArray[0].name
-        # & '.\Safe Management\Safe-Management.ps1' -PVWAURL $pvWAURL -Add -SafeName $safeName -ManagingCPM $lowestPopManagingCPM
+        
+        write-host "Creating new safe for",$newuser.UserPrincipalName,"with safe name of",$SafeName,"on",$lowestPopManagingCPM
         # Create new user's safe 
-        New-Safe -SafeName $safeName -ManagingCPM $lowestPopManagingCPM
-    } 
+        New-Safe -SafeName $safeName -ManagingCPM $lowestPopManagingCPM  -safeDescription "Private User Safe"    
+        $g_SafesList = $null;
+        do {
+            #sit and wait for replication
+            # Issue where the global variable isn't getting set when the new safe is created. Easier to rebuild the 
+            $allSafes = get-safes    
+        } while ($null -eq ($allsafes.safename -eq $safename))
+    } else {
+        write-host "Note:: Safe name",$SafeName,"already exists."
+    }
 
     #Grab existing safe members
     $safeMembers = Get-SafeMembers -safeName $SafeName
@@ -606,70 +773,13 @@ forEach ($UserSMTP in $NewUserSMTP ) {
     #Don't do ADD accpimt of alread there. 
     if (!($safemembers.membername -contains $newuser.UserPrincipalName )) {
         # Add current AD user as a member of their own safe. 
-
-        #End-user's Permissions configuration defined by CyberArk 
-        $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permAddAccounts = $permUpdateAccountContent = $permUpdateAccountProperties = $permInitiateCPMManagement = `
-            $permSpecifyNextAccountContent = $permRenameAccounts = $permDeleteAccounts = $permUnlockAccounts = $permManageSafe = $permManageSafeMembers = $permBackupSafe = $permViewAuditLog = `
-            $permViewSafeMembers = $permAccessWithoutConfirmation = $permCreateFolders = $permDeleteFolders = $permMoveAccountsAndFolders = $false
-        [int]$permRequestsAuthorizationLevel = 0
-        
-        switch ($MemberRole) {
-            "Admin"
-            {
-                $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permAddAccounts = $permUpdateAccountContent = $permUpdateAccountProperties = $permInitiateCPMManagement = `
-                    $permSpecifyNextAccountContent = $permRenameAccounts = $permDeleteAccounts = $permUnlockAccounts = $permManageSafe = $permManageSafeMembers = $permBackupSafe = `
-                    $permViewAuditLog = $permViewSafeMembers = $permAccessWithoutConfirmation = $permCreateFolders = $permDeleteFolders = $permMoveAccountsAndFolders = $true
-                $permRequestsAuthorizationLevel = 1
-            }
-            "Auditor"
-            {
-                $permListAccounts = $permViewAuditLog = $permViewSafeMembers = $true
-            }
-            "EndUser"
-            {
-                $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permViewAuditLog = $permViewSafeMembers = $true
-            }
-            "Approver"
-            {
-                $permListAccounts = $permViewAuditLog = $permViewSafeMembers = $true
-                $permRequestsAuthorizationLevel = 1
-            }
-            "Owner"
-            {
-                $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permAddAccounts = $permUpdateAccountContent = $permUpdateAccountProperties = $permInitiateCPMManagement = $permSpecifyNextAccountContent = $permRenameAccounts = $permDeleteAccounts = $permUnlockAccounts = $permManageSafeMembers = $permViewAuditLog = $permViewSafeMembers = $permMoveAccountsAndFolders = $true
-                $permRequestsAuthorizationLevel = 1
-            }
-        }
-        
-        Set-SafeMember -safename $SafeName -safeMember $newuser.UserPrincipalName -memberSearchInLocation $UserLocation `
-            -permUseAccounts $permUseAccounts -permRetrieveAccounts $permRetrieveAccounts -permListAccounts $permListAccounts `
-            -permAddAccounts $permAddAccounts -permUpdateAccountContent $permUpdateAccountContent -permUpdateAccountProperties $permUpdateAccountProperties `
-            -permInitiateCPMManagement $permInitiateCPMManagement -permSpecifyNextAccountContent $permSpecifyNextAccountContent `
-            -permRenameAccounts $permRenameAccounts -permDeleteAccounts $permDeleteAccounts -permUnlockAccounts $permUnlockAccounts `
-            -permManageSafe $permManageSafe -permManageSafeMembers $permManageSafeMembers -permBackupSafe $permBackupSafe `
-            -permViewAuditLog $permViewAuditLog -permViewSafeMembers $permViewSafeMembers `
-            -permRequestsAuthorizationLevel $permRequestsAuthorizationLevel -permAccessWithoutConfirmation $permAccessWithoutConfirmation `
-            -permCreateFolders $permCreateFolders -permDeleteFolders $permDeleteFolders -permMoveAccountsAndFolders $permMoveAccountsAndFolders
-
-            
-        #Change the permissions granted to CDT_ADMIN:
-        $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permAddAccounts = $permUpdateAccountContent = $permUpdateAccountProperties = $permInitiateCPMManagement = `
-            $permSpecifyNextAccountContent = $permRenameAccounts = $permDeleteAccounts = $permUnlockAccounts =  $permAccessWithoutConfirmation = $permCreateFolders = $permDeleteFolders = $permMoveAccountsAndFolders = $false
-        [int]$permRequestsAuthorizationLevel = 0
-        $permManageSafe = $permManageSafeMembers = $permBackupSafe = $permViewAuditLog =  $permViewSafeMembers = $true
-
-        Set-SafeMember -safename $SafeName -safeMember "CDT_Admin" -updateMember -memberSearchInLocation $UserLocation `
-            -permUseAccounts $permUseAccounts -permRetrieveAccounts $permRetrieveAccounts -permListAccounts $permListAccounts `
-            -permAddAccounts $permAddAccounts -permUpdateAccountContent $permUpdateAccountContent -permUpdateAccountProperties $permUpdateAccountProperties `
-            -permInitiateCPMManagement $permInitiateCPMManagement -permSpecifyNextAccountContent $permSpecifyNextAccountContent `
-            -permRenameAccounts $permRenameAccounts -permDeleteAccounts $permDeleteAccounts -permUnlockAccounts $permUnlockAccounts `
-            -permManageSafe $permManageSafe -permManageSafeMembers $permManageSafeMembers -permBackupSafe $permBackupSafe `
-            -permViewAuditLog $permViewAuditLog -permViewSafeMembers $permViewSafeMembers `
-            -permRequestsAuthorizationLevel $permRequestsAuthorizationLevel -permAccessWithoutConfirmation $permAccessWithoutConfirmation `
-            -permCreateFolders $permCreateFolders -permDeleteFolders $permDeleteFolders -permMoveAccountsAndFolders $permMoveAccountsAndFolders
+        Set-MemberRole -safeName $SafeName -SafeUser $newuser.UserPrincipalName -memberRole $MemberRole               
     } else {
-        $safemembers | ?{$_.membername -eq $newuser.UserPrincipalName}
+        #update role if already there.. 
+        Set-MemberRole -safeName $SafeName -SafeUser $newuser.UserPrincipalName -memberRole $MemberRole -updateMember
     }
+    Set-MemberRole -safeName $SafeName -SafeUser "CDT_Admin" -memberRole "CDT_Admin" -updateMember
+    $safemembers | where-object {$_.membername -eq $newuser.UserPrincipalName} | convertto-json   
 }
 Invoke-Logoff
 
