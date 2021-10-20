@@ -165,18 +165,18 @@ If (Test-CommandExists Invoke-RestMethod)
 {
 
 # Check that the PVWA URL is OK
-    If ($PVWAURL -ne "")
-    {
-        If ($PVWAURL.Substring($PVWAURL.Length-1) -eq "/")
-        {
-            $PVWAURL = $PVWAURL.Substring(0,$PVWAURL.Length-1)
-        }
-    }
-    else
-    {
-        Write-Host -ForegroundColor Red "PVWA URL can not be empty"
-        return
-    }
+If ($PVWAURL -ne "")
+{
+	If ($PVWAURL.Substring($PVWAURL.Length-1) -eq "/")
+	{
+		$PVWAURL = $PVWAURL.Substring(0,$PVWAURL.Length-1)
+	}
+}
+else
+{
+	Write-Host -ForegroundColor Red "PVWA URL can not be empty"
+	return
+}
 
 #region [Logon]
     # Get Credentials to Login

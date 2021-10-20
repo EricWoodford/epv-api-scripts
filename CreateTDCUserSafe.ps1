@@ -8,6 +8,8 @@
 [OutputType()]
 Param
 (
+    [Parameter(Mandatory = $true)]
+    [System.Management.Automation.CredentialAttribute()]$Credentials,
     [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
     [string[]]$NewUserSMTP,
     [Parameter(Mandatory = $false, ValueFromPipelineByPropertyName = $true)]
@@ -15,15 +17,30 @@ Param
 )
 
 
+
+# Get Script Location 
+$ScriptFullPath = $MyInvocation.MyCommand.Path
+$ScriptLocation = Split-Path -Parent $ScriptFullPath
+$ScriptParameters = @()
+$PSBoundParameters.GetEnumerator() | ForEach-Object { $ScriptParameters += ("-{0} '{1}'" -f $_.Key, $_.Value) }
+$global:g_ScriptCommand = "{0} {1}" -f $ScriptFullPath, $($ScriptParameters -join ' ')
+
+# Set Log file path
+$global:LOG_DATE = $(Get-Date -Format yyyyMMdd) + "-" + $(Get-Date -Format HHmmss)
+$global:LOG_FILE_PATH = "$ScriptLocation\SafeManagement_$LOG_DATE.log"
+
+$InDebug = $PSBoundParameters.Debug.IsPresent
+$InVerbose = $PSBoundParameters.Verbose.IsPresent
+
 Function Get-LogonHeader {
     <# 
-.SYNOPSIS 
-	Get-LogonHeader
-.DESCRIPTION
-	Get-LogonHeader
-.PARAMETER Credentials
-	The REST API Credentials to authenticate
-#>
+    .SYNOPSIS 
+        Get-LogonHeader 
+    .DESCRIPTION
+        Get-LogonHeader - authenticate with CyberArk rest API using native CyberArk account credentials. 
+    .PARAMETER Credentials
+        The REST API Credentials to authenticate
+    #>
     param(
         [Parameter(Mandatory = $true)]
         [System.Management.Automation.CredentialAttribute()]$Credentials,
@@ -91,21 +108,20 @@ Function Get-LogonHeader {
     }
 }
 
-
 Function Invoke-Logoff {
     <# 
-.SYNOPSIS 
-	Invoke-Logoff
-.DESCRIPTION
-	Logoff a PVWA session
-#>
+    .SYNOPSIS 
+        Invoke-Logoff
+    .DESCRIPTION
+        Logoff a PVWA session
+    #>
     try
     {
         # Logoff the session
         # ------------------
         If ($null -ne $g_LogonHeader)
         {
-            Write-LogMessage -Type Info -Msg "Logoff Session..."
+            write-logMessage -Type Info -Msg "Logoff Session..."
             Invoke-RestMethod -Method Post -Uri $URL_Logoff -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700 | Out-Null
             Set-Variable -Name g_LogonHeader -Value $null -Scope global
         }
@@ -118,16 +134,15 @@ Function Invoke-Logoff {
 
 Function Get-Safe {
     <#
-.SYNOPSIS
-Get all Safe details on a specific safe
+        .SYNOPSIS
+        Get all Safe details on a specific safe
 
-.DESCRIPTION
-Get all Safe details on a specific safe
+        .DESCRIPTION
+        Get all Safe details on a specific safe
 
-.EXAMPLE
-Get-Safe -safeName "x0-Win-S-Admins"
-
-#>
+        .EXAMPLE
+        Get-Safe -safeName "x0-Win-S-Admins"
+    #>
     param (
         [ValidateScript( { $_.Length -le 28 })]
         [String]$safeName
@@ -136,7 +151,7 @@ Get-Safe -safeName "x0-Win-S-Admins"
     try
     {
         $accSafeURL = $URL_SpecificSafe -f $(ConvertTo-URL $safeName)
-        $_safe = $(Invoke-RestMethod -Uri $accSafeURL -Method "Get" -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700 -ErrorAction "SilentlyContinue").GetSafeResult
+        $_safe = $(Invoke-RestMethod -Uri $accSafeURL -Method "Get" -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700) #-ErrorAction "SilentlyContinue").GetSafeResult
     }
     catch
     {
@@ -148,29 +163,20 @@ Get-Safe -safeName "x0-Win-S-Admins"
 
 Function Get-Safes {
     <#
-.SYNOPSIS
-Lists the cyberark safes that the APIUser has access to
-
-.DESCRIPTION
-Lists the cyberark safes that the APIUser has access to
-
-.EXAMPLE
-Get-Safes
-
-#>
-
-    [CmdletBinding()]
-    [OutputType([String])]
-    Param
-    (
-    )
-
+        .SYNOPSIS
+        Lists the cyberark safes that the APIUser has access to
+        .DESCRIPTION
+        Lists the cyberark safes that the APIUser has access to
+        .EXAMPLE
+        Get-Safes
+    #>
     try
     {
         If ($null -eq $g_SafesList)
         {
-            Write-LogMessage -Type Debug -Msg "Retrieving safes from the vault..."
-            $safes = (Invoke-RestMethod -Uri $URL_Safes -Method GET -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700).GetSafesResult
+            #write-logMessage -Type Debug -Msg "Retrieving safes from the vault..."
+            $AllSafesURL = $URL_Safes+"?includeAccounts=true&offset=8&limit=1000"
+            $safes = (Invoke-RestMethod -Uri $AllSafesURL -Method GET -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700).value
             Set-Variable -Name g_SafesList -Value $safes -Scope Global
         }
 		
@@ -182,15 +188,16 @@ Get-Safes
     }
 
 }
+
 Function Test-Safe {
     <# 
-.SYNOPSIS 
-	Returns the Safe members
-.DESCRIPTION
-	Returns the Safe members
-.PARAMETER SafeName
-	The Safe Name check if exists
-#>
+    .SYNOPSIS 
+        Returns the Safe members
+    .DESCRIPTION
+        Returns the Safe members
+    .PARAMETER SafeName
+        The Safe Name check if exists
+    #>
     param (
         [Parameter(Mandatory = $true)]
         [ValidateNotNullOrEmpty()] 
@@ -223,19 +230,19 @@ Function Test-Safe {
         If ($chkSafeExists -eq $true)
         {
             # Safe exists
-            Write-LogMessage -Type Info -MSG "Safe $safeName exists"
+            write-logMessage -Type Info -MSG "test-safe: Safe $safeName exists"
             $retResult = $true
         }
         Else
         {
             # Safe does not exist
-            Write-LogMessage -Type Warning -MSG "Safe $safeName does not exist"
+            write-logMessage -Type Warning -MSG "test-safe: Safe $safeName does not exist"
             $retResult = $false
         }
     }
     catch
     {
-        Write-LogMessage -Type Error -MSG $_.Exception -ErrorAction "SilentlyContinue"
+        write-logMessage -Type Error -MSG $_.Exception -ErrorAction "SilentlyContinue"
         $retResult = $false
     }
 	
@@ -244,16 +251,16 @@ Function Test-Safe {
 
 Function New-Safe {
     <#
-.SYNOPSIS
-Allows a user to create a new cyberArk safe
+    .SYNOPSIS
+    Allows a user to create a new cyberArk safe
 
-.DESCRIPTION
-Creates a new cyberark safe
+    .DESCRIPTION
+    Creates a new cyberark safe
 
-.EXAMPLE
-New-Safe -safename "x0-Win-S-Admins" -safeDescription "Safe description goes here"
+    .EXAMPLE
+    New-Safe -safename "x0-Win-S-Admins" -safeDescription "Safe description goes here"
 
-#>
+    #>
     [CmdletBinding()]
     [OutputType()]
     Param
@@ -290,7 +297,7 @@ New-Safe -safename "x0-Win-S-Admins" -safeDescription "Safe description goes her
 
     try
     {
-        Write-LogMessage -Type Debug -Msg "Adding the safe $safename to the Vault..."
+        write-logMessage -Type Debug -Msg "Adding the safe $safename to the Vault..."
         $safeAdd = Invoke-RestMethod -Uri $URL_Safes -Body ($createSafeBody | ConvertTo-Json) -Method POST -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700
         # Reset cached Safes list
         #Set-Variable -Name g_SafesList -Value $null -Scope Global
@@ -304,21 +311,144 @@ New-Safe -safename "x0-Win-S-Admins" -safeDescription "Safe description goes her
     }
 }
 
-Function Set-SafeMember {
+Function Write-LogMessage {
     <#
 .SYNOPSIS
-Gives granular permissions to a member on a cyberark safe
+	Method to log a message on screen and in a log file
 
 .DESCRIPTION
-Gives granular permission to a cyberArk safe to the particular member based on parameters sent to the command.
+	Logging The input Message to the Screen and the Log File.
+	The Message Type is presented in colours on the screen based on the type
 
-.EXAMPLE
-Set-SafeMember -safename "Win-Local-Admins" -safeMember "Win-Local-Admins" -memberSearchInLocation "LDAP Directory Name"
-
-.EXAMPLE
-Set-SafeMember -safename "Win-Local-Admins" -safeMember "Administrator" -memberSearchInLocation vault
-
+.PARAMETER LogFile
+	The Log File to write to. By default using the LOG_FILE_PATH
+.PARAMETER MSG
+	The message to log
+.PARAMETER Header
+	Adding a header line before the message
+.PARAMETER SubHeader
+	Adding a Sub header line before the message
+.PARAMETER Footer
+	Adding a footer line after the message
+.PARAMETER Type
+	The type of the message to log (Info, Warning, Error, Debug)
 #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [String]$MSG,
+        [Parameter(Mandatory = $false)]
+        [Switch]$Header,
+        [Parameter(Mandatory = $false)]
+        [Switch]$SubHeader,
+        [Parameter(Mandatory = $false)]
+        [Switch]$Footer,
+        [Parameter(Mandatory = $false)]
+        [ValidateSet("Info", "Warning", "Error", "Debug", "Verbose")]
+        [String]$type = "Info",
+        [Parameter(Mandatory = $false)]
+        [String]$LogFile = $LOG_FILE_PATH
+    )
+    try
+    {
+        If ($Header)
+        {
+            "=======================================" | Out-File -Append -FilePath $LOG_FILE_PATH 
+            Write-Host "======================================="
+        }
+        ElseIf ($SubHeader)
+        { 
+            "------------------------------------" | Out-File -Append -FilePath $LOG_FILE_PATH 
+            Write-Host "------------------------------------"
+        }
+	
+        $msgToWrite = "[$(Get-Date -Format "yyyy-MM-dd hh:mm:ss")]`t"
+        $writeToFile = $true
+        # Replace empty message with 'N/A'
+        if ([string]::IsNullOrEmpty($Msg))
+        {
+            $Msg = "N/A" 
+        }
+        # Mask Passwords
+        if ($Msg -match '((?:"password"|"secret"|"NewCredentials")\s{0,}["\:=]{1,}\s{0,}["]{0,})(?=([\w!@#$%^&*()-\\\/]+))')
+        {
+            $Msg = $Msg.Replace($Matches[2], "****")
+        }
+        # Check the message type
+        switch ($type)
+        {
+            "Info"
+            { 
+                Write-Host $MSG.ToString()
+                $msgToWrite += "[INFO]`t$Msg"
+            }
+            "Warning"
+            {
+                Write-Host $MSG.ToString() -ForegroundColor DarkYellow
+                $msgToWrite += "[WARNING]`t$Msg"
+            }
+            "Error"
+            {
+                Write-Host $MSG.ToString() -ForegroundColor Red
+                $msgToWrite += "[ERROR]`t$Msg"
+            }
+            "Debug"
+            { 
+                if ($InDebug)
+                {
+                    Write-Debug $MSG
+                    $msgToWrite += "[DEBUG]`t$Msg"
+                }
+                else
+                {
+                    $writeToFile = $False 
+                }
+            }
+            "Verbose"
+            { 
+                if ($InVerbose)
+                {
+                    Write-Verbose $MSG
+                    $msgToWrite += "[VERBOSE]`t$Msg"
+                }
+                else
+                {
+                    $writeToFile = $False 
+                }
+            }
+        }
+		
+        If ($writeToFile)
+        {
+            $msgToWrite | Out-File -Append -FilePath $LOG_FILE_PATH 
+        }
+        If ($Footer)
+        { 
+            "=======================================" | Out-File -Append -FilePath $LOG_FILE_PATH 
+            Write-Host "======================================="
+        }
+    }
+    catch
+    {
+        Write-Error "Error in writing log: $($_.Exception.Message)" 
+    }
+}
+
+Function Set-SafeMember {
+    <#
+    .SYNOPSIS
+    Gives granular permissions to a member on a cyberark safe
+
+    .DESCRIPTION
+    Gives granular permission to a cyberArk safe to the particular member based on parameters sent to the command.
+
+    .EXAMPLE
+    Set-SafeMember -safename "Win-Local-Admins" -safeMember "Win-Local-Admins" -memberSearchInLocation "LDAP Directory Name"
+
+    .EXAMPLE
+    Set-SafeMember -safename "Win-Local-Admins" -safeMember "Administrator" -memberSearchInLocation vault
+
+    #>
     [CmdletBinding()]
     [OutputType()]
     Param
@@ -327,6 +457,7 @@ Set-SafeMember -safename "Win-Local-Admins" -safeMember "Administrator" -memberS
         [ValidateScript( { Test-Safe -SafeName $_ })]
         $safename,
         [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
+        #[ValidateScript( { get-CAUser -Safeuser $_ })]
         $safeMember,
         [Parameter(Mandatory = $false, ValueFromPipelineByPropertyName = $true)]
         [switch]$updateMember,
@@ -418,20 +549,20 @@ Set-SafeMember -safename "Win-Local-Admins" -safeMember "Administrator" -memberS
         {
             If ($updateMember)
             {
-                Write-LogMessage -Type Debug -Msg "Updating safe membership for $safeMember on $safeName in the vault..."
+                write-logMessage -Type debug -Msg "Updating safe membership for $safeMember on $safeName in the vault..."
                 $urlSafeMembers = ($URL_SafeSpecificMember -f $(ConvertTo-URL $safeName), $safeMember)
                 $restMethod = "PUT"
             }
             elseif ($deleteMember)
             {
-                Write-LogMessage -Type Debug -Msg "Deleting $safeMember from $safeName in the vault..."
+                write-logMessage -Type Debug -Msg "Deleting $safeMember from $safeName in the vault..."
                 $urlSafeMembers = ($URL_SafeSpecificMember -f $(ConvertTo-URL $safeName), $safeMember)
                 $restMethod = "DELETE"
             }
             else
             {
                 # Adding a member
-                Write-LogMessage -Type Debug -Msg "Adding $safeMember located in $memberSearchInLocation to $safeName in the vault..."
+                write-logMessage -Type Debug -Msg "Adding $safeMember located in $memberSearchInLocation to $safeName in the vault..."
                 $urlSafeMembers = ($URL_SafeMembers -f $(ConvertTo-URL $safeName))
                 $restMethod = "POST"
             }
@@ -441,14 +572,14 @@ Set-SafeMember -safename "Win-Local-Admins" -safeMember "Administrator" -memberS
         {
             if ($rMethodErr.message -like "*User or Group is already a member*")
             {
-                Write-LogMessage -Type Warning -Msg "The user $safeMember is already a member. Use the update member method instead"
+                write-logMessage -Type Warning -Msg "The user $safeMember is already a member. Use the update member method instead"
             }
             elseif ($rMethodErr.message -like "*User or Group was not found.*")
             {   
                 If ($AddOnUpdate)
                 {
                     # Adding a member
-                    Write-LogMessage -Type Warning -Msg "User or Group was not found. Attempting to adding $safeMember located in $memberSearchInLocation to $safeName in the vault..."
+                    write-logMessage -Type Warning -Msg "User or Group was not found. Attempting to adding $safeMember located in $memberSearchInLocation to $safeName in the vault..."
                     $urlSafeMembers = ($URL_SafeMembers -f $(ConvertTo-URL $safeName))
                     $restMethod = "POST"
                     try
@@ -458,25 +589,25 @@ Set-SafeMember -safename "Win-Local-Admins" -safeMember "Administrator" -memberS
                     catch
                     {
 
-                        Write-LogMessage -Type Error -Msg "There was an error setting the membership for $safeMember on $safeName in the Vault. The error was:"
-                        Write-LogMessage -Type Error -Msg ("{0} ({1})" -f $rMethodErr.message, $_.Exception.Response.StatusDescription)
+                        write-logMessage -Type Error -Msg "There was an error setting the membership for $safeMember on $safeName in the Vault. The error was:"
+                        write-logMessage -Type Error -Msg ("{0} ({1})" -f $rMethodErr.message, $_.Exception.Response.StatusDescription)
                     }
                 }
                 else
                 {
-                    Write-LogMessage -Type Warning -Msg "User or Group was not found. To automatically attempt to add use AddOnUpdate"
+                    write-logMessage -Type Warning -Msg "User or Group was not found. To automatically attempt to add use AddOnUpdate"
                 }
             }
             else
             {
-                Write-LogMessage -Type Error -Msg "There was an error setting the membership for $safeMember on $safeName in the Vault. The error was:"
-                Write-LogMessage -Type Error -Msg ("{0} ({1})" -f $rMethodErr.message, $_.Exception.Response.StatusDescription)
+                write-logMessage -Type Error -Msg "There was an error setting the membership for $safeMember on $safeName in the Vault. The error was:"
+                write-logMessage -Type Error -Msg ("{0} ({1})" -f $rMethodErr.message, $_.Exception.Response.StatusDescription)
             }
         }
     }
     else
     {
-        Write-LogMessage -Type Info -Msg "Skipping default user $safeMember..."
+        write-logMessage -Type Info -Msg "Skipping default user $safeMember..."
     }
 }
 
@@ -499,7 +630,7 @@ Function Set-MemberRole {
         $permSpecifyNextAccountContent = $permRenameAccounts = $permDeleteAccounts = $permUnlockAccounts = $permManageSafe = $permManageSafeMembers = $permBackupSafe = $permViewAuditLog = `
         $permViewSafeMembers = $permAccessWithoutConfirmation = $permCreateFolders = $permDeleteFolders = $permMoveAccountsAndFolders = $false
     [int]$permRequestsAuthorizationLevel = 0
-    
+    $UserLocation = get-directoryName
     switch ($MemberRole) {
         "Admin"
         {
@@ -523,14 +654,30 @@ Function Set-MemberRole {
         }
         "Owner"
         {
+            write-logMessage -Type Info -Msg "Granting owner role to $safeuser"
             $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permAddAccounts = $permUpdateAccountContent = $permUpdateAccountProperties = $permInitiateCPMManagement = $permSpecifyNextAccountContent = $permRenameAccounts = $permDeleteAccounts = $permUnlockAccounts = $permManageSafeMembers = $permViewAuditLog = $permViewSafeMembers = $permMoveAccountsAndFolders = $true
             $permRequestsAuthorizationLevel = 1
         }
-        "CDT_Admin" {
+        "cdt_admin" {
             $permManageSafe = $permManageSafeMembers = $permBackupSafe = $permViewAuditLog =  $permViewSafeMembers = $true
+            $UserLocation = "Vault"
         }
-    }
-    Set-SafeMember -safename $SafeName -safeMember $SafeUser -memberSearchInLocation $UserLocation `
+    }#
+    $alreadyMember = (Get-SafeMembers -safeName $safename).membername -eq $safeuser
+    if ($null -eq $alreadyMember) {
+        write-logMessage -Type Info -Msg "Adding new member to $SafeName"
+        Set-SafeMember -safename $SafeName -safeMember $SafeUser -memberSearchInLocation $UserLocation `
+            -permUseAccounts $permUseAccounts -permRetrieveAccounts $permRetrieveAccounts -permListAccounts $permListAccounts `
+            -permAddAccounts $permAddAccounts -permUpdateAccountContent $permUpdateAccountContent -permUpdateAccountProperties $permUpdateAccountProperties `
+            -permInitiateCPMManagement $permInitiateCPMManagement -permSpecifyNextAccountContent $permSpecifyNextAccountContent `
+            -permRenameAccounts $permRenameAccounts -permDeleteAccounts $permDeleteAccounts -permUnlockAccounts $permUnlockAccounts `
+            -permManageSafe $permManageSafe -permManageSafeMembers $permManageSafeMembers -permBackupSafe $permBackupSafe `
+            -permViewAuditLog $permViewAuditLog -permViewSafeMembers $permViewSafeMembers `
+            -permRequestsAuthorizationLevel $permRequestsAuthorizationLevel -permAccessWithoutConfirmation $permAccessWithoutConfirmation `
+            -permCreateFolders $permCreateFolders -permDeleteFolders $permDeleteFolders -permMoveAccountsAndFolders $permMoveAccountsAndFolders
+    } else {
+        write-logMessage -Type Info -Msg "Updating member on $SafeName"
+        Set-SafeMember -safename $SafeName -safeMember $SafeUser -memberSearchInLocation $UserLocation `
         -permUseAccounts $permUseAccounts -permRetrieveAccounts $permRetrieveAccounts -permListAccounts $permListAccounts `
         -permAddAccounts $permAddAccounts -permUpdateAccountContent $permUpdateAccountContent -permUpdateAccountProperties $permUpdateAccountProperties `
         -permInitiateCPMManagement $permInitiateCPMManagement -permSpecifyNextAccountContent $permSpecifyNextAccountContent `
@@ -538,8 +685,8 @@ Function Set-MemberRole {
         -permManageSafe $permManageSafe -permManageSafeMembers $permManageSafeMembers -permBackupSafe $permBackupSafe `
         -permViewAuditLog $permViewAuditLog -permViewSafeMembers $permViewSafeMembers `
         -permRequestsAuthorizationLevel $permRequestsAuthorizationLevel -permAccessWithoutConfirmation $permAccessWithoutConfirmation `
-        -permCreateFolders $permCreateFolders -permDeleteFolders $permDeleteFolders -permMoveAccountsAndFolders $permMoveAccountsAndFolders
-
+        -permCreateFolders $permCreateFolders -permDeleteFolders $permDeleteFolders -permMoveAccountsAndFolders $permMoveAccountsAndFolders -updateMember
+    }
 }
 
 Function Create-SearchCriteria {
@@ -588,56 +735,108 @@ Function Encode-URL($sText)
 }
 
 
-function get-CYUser {
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ConvertTo-URL
+# Description....: HTTP Encode test in URL
+# Parameters.....: Text to encode
+# Return Values..: Encoded HTML URL text
+# =================================================================================================================================
+Function ConvertTo-URL($sText) {
+    <#
+    .SYNOPSIS
+	HTTP Encode test in URL
+    .DESCRIPTION
+	HTTP Encode test in URL
+    .PARAMETER sText
+    The text to encode
+    #>
+    if ($sText.Trim() -ne "")
+    {
+        write-logMessage -Type Debug -Msg "Returning URL Encode of $sText"
+        return [URI]::EscapeDataString($sText)
+    }
+    else
+    {
+        return $sText
+    }
+}
+
+function get-directoryName {
+    $URL_Directory = $URL_PVWAAPI + "/Configuration/LDAP/Directories/"
+    $directories = Invoke-RestMethod -Uri $URL_Directory -Headers $g_LogonHeader -Method GET 
+    if ($directories.count -eq 1) {return $directories[0].DomainName}
+}
+
+function get-CAUser {
     param (        
         [Parameter(Mandatory = $true)]
-        [string]$SafeUser,
-        [Parameter(Mandatory = $false)]
-        [String]$safeName, 
-        [Parameter(Mandatory = $false)]
-        [string]$SortBy,
+        [string]$userName,
         [Parameter(Mandatory = $false)]
         [int]$limit=10
     )
 
     try {
-        $AccountsURLWithFilters = ""
-        $AccountsURLWithFilters = $(Create-SearchCriteria -sURL $url_users -sSearch $SafeUser -sSortParam $SortBy -sSafeName $SafeName -iLimitPage $Limit)
-        Write-Debug $AccountsURLWithFilters
+        $UserURlwithNameFilter = ""
+        $UserURlwithNameFilter = $(Create-SearchCriteria -sURL $url_users -sSearch $userName -iLimitPage $Limit)
+        # $SearchFilter = Encode-URL("userName eq "+$userSearch)
+       # $UserURlwithNameFilter = $url_users+"?ExtendedDetails=True&filter="+$username
+        Write-Debug $UserURlwithNameFilter
     } catch {
         Write-Error $_.Exception
     }
     try{
-        $GetAccountsResponse = Invoke-RestMethod -Method Get -Uri $AccountsURLWithFilters -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700
+        $GetAccountsResponse = Invoke-RestMethod -Method Get -Uri $UserURlwithNameFilter -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700
+        if ($GetAccountsResponse.total -eq 1) {
+            $UserURlwithNameFilter = $(Create-SearchCriteria -sURL $($url_users+"/"+$GetAccountsResponse.users[0].id) )
+            $GetAccountsResponse = Invoke-RestMethod -Method Get -Uri $UserURlwithNameFilter -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700
+            return $GetAccountsResponse
+        } else {
+            return $GetAccountsResponse.users
+        }
+        
     } catch {
         Write-Error $_.Exception.Response.StatusDescription
     }
-    return $GetAccountsResponse.users
+    
 }
 
 function get-SpoofedADUser {
     param (        
         [string]$SafeUser
     )
-    $getCYArkUser = get-CYUser -SafeUser $SafeUser
+    #Create an object that looks like an AD Object using whatever means available. 
+
+    $regex = "[a-z0-9!#$%&'*+/=?^_{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_{|}~-]+)*@(?:a-z0-9?.)+a-z0-9?"
+
+    #Attempt to read from CyberARk existing users.
+    $getCYArkUser = get-CAUser -userName $SafeUser
     if ($null -eq $getCYArkUser) { return $null} else {
-        $ADLookAlike = $getCYArkUser | Select-Object @{Name="UserPrincipalName";Expression={$_.username}},@{name="surName";Expression={$_.personalDetails.FirstName}},@{Name="GivenName";Expression={$_.Personaldetails.LastName}}
+        write-logMessage -Type Info -Msg "Using CyberArk user account $($getCYArkUser.name)"
+        $ADLookAlike = $getCYArkUser | Select-Object @{Name="UserPrincipalName";Expression={$_.username}},@{name="GivenName";Expression={$_.personalDetails.FirstName}},@{Name="SurName";Expression={$_.Personaldetails.LastName}}
         return $ADLookAlike
-    }
+    } elseif ($SafeUser -match $regex) { # If SafeUser entry matches an email address, attempt to return 
+        $userPortion = $safeUser.split("@")[0]    # remove email domain from email address. 
+        # ref: https://pscustomobject.github.io/powershell/PowerShell-Convert-to-Title-Case
+        $FirstName = (Get-Culture).TextInfo.ToTitleCase($userPortion.split(".")[0].toLower())
+        $LastName = (Get-Culture).TextInfo.ToTitleCase($userPortion.split(".")[1].toLower())
+        if ($null -eq $FirstName -or $null -eq $LastName) {return $null}  # SMTP address didn't follow first.last@domain format.
+        $ADLookAlike = $safeUser | Select-Object @{Name="UserPrincipalName";Expression={$_}},@{name="GivenName";Expression={$FirstName}},@{Name="SurName";Expression={$LastName}}
+        return $ADLookAlike
+    } else {return $null }
 }
 
 Function Get-SafeMembers {
     <#
-.SYNOPSIS
-Returns the permissions of a member on a cyberark safe
+    .SYNOPSIS
+    Returns the permissions of a member on a cyberark safe
 
-.DESCRIPTION
-Returns the permissions of a cyberArk safe of all members based on parameters sent to the command.
+    .DESCRIPTION
+    Returns the permissions of a cyberArk safe of all members based on parameters sent to the command.
 
-.EXAMPLE
-Get-SafeMember -safename "Win-Local-Admins" 
+    .EXAMPLE
+    Get-SafeMember -safename "Win-Local-Admins" 
 
-#> 
+    #> 
     param (
         [Parameter(Mandatory = $true)]
         [String]$safeName
@@ -647,9 +846,9 @@ Get-SafeMember -safename "Win-Local-Admins"
     try
     {
         $accSafeMembersURL = $URL_SafeMembers -f $(ConvertTo-URL $safeName)
-        $_safeMembers = $(Invoke-RestMethod -Uri $accSafeMembersURL -Method GET -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700 -ErrorAction "SilentlyContinue")
+        $_safeMembers = $(Invoke-RestMethod -Uri $accSafeMembersURL -Method GET -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700 -ErrorAction "SilentlyContinue").value
         # Remove default users and change UserName to MemberName
-        $_safeOwners = $_safeMembers.members | Where-Object { $_.UserName -NotIn $g_DefaultUsers } | Select-Object -Property @{Name = 'MemberName'; Expression = { $_.UserName } }, Permissions
+        $_safeOwners = $_safeMembers | Where-Object { $_.memberName -NotIn $g_DefaultUsers } | Select-Object -Property MemberName, Permissions
     }
     catch
     {
@@ -659,8 +858,7 @@ Get-SafeMember -safename "Win-Local-Admins"
     return $_safeOwners
 }
 
-Function Convert-ToBool
-{
+Function Convert-ToBool {
     param (
         [string]$txt
     )
@@ -673,7 +871,7 @@ Function Convert-ToBool
     }
     else
     {
-        Write-LogMessage -Type Error -Msg "The input ""$txt"" is not in the correct format (true/false), defaulting to False"
+        write-logMessage -Type Error -Msg "The input ""$txt"" is not in the correct format (true/false), defaulting to False"
         return $false
     }
 }
@@ -693,31 +891,37 @@ $global:g_DefaultUsers = @("Master", "Batch", "Backup Users", "Auditors", "Opera
 
 ## TDC Specific values:
 # ----------------------
-$defaultDomain = "tdc.ad.teale.ca.gov"
+$defaultDomain = "tdc.ad.teale.ca.gov"  # default AD domain to lookup user accounts. 
 $pvWAURL = "https://cdt.privilegecloud.cyberark.com/PasswordVault"
 
 # Global URLS
 # -----------
 $URL_PVWAWebServices = $PVWAURL + "/WebServices"
-$URL_PVWABaseAPI = $URL_PVWAWebServices + "/PIMServices.svc"
-$URL_CyberArkAuthentication = $URL_PVWAWebServices + "/auth/cyberark/CyberArkAuthenticationService.svc"
-$URL_Logon = $URL_CyberArkAuthentication + "/Logon"
-$URL_Logoff = $URL_CyberArkAuthentication + "/Logoff"
+$URL_PVWABaseAPI = $URL_PVWAWebServices + "/PIMServices.svc" # Used to update Safe Members REF: https://docs.cyberark.com/Product-Doc/OnlineHelp/PAS/Latest/en/Content/WebServices/Update%20Safe.htm
+# old method $URL_CyberArkAuthentication = $URL_PVWAWebServices + "/auth/cyberark/CyberArkAuthenticationService.svc"
 $URL_PVWAAPI = $PVWAURL+"/api"
+$URL_CyberArkAuthentication = $URL_PVWAAPI  + "/auth"
+$URL_Logon = $URL_CyberArkAuthentication + "/Cyberark/Logon"
+$URL_Logoff = $URL_CyberArkAuthentication + "/Logoff"
+
 
 # URL Methods
 # -----------
-$URL_Safes = $URL_PVWABaseAPI + "/Safes"
+$URL_Safes = $URL_PVWAAPI + "/Safes"
 $URL_SpecificSafe = $URL_Safes + "/{0}"
 $URL_SafeMembers = $URL_SpecificSafe + "/Members"
-$URL_SafeSpecificMember = $URL_SpecificSafe + "/Members/{1}"
+# as of 10/19 the Update and Delete portion of set-safeMember function uses the old 1.0 API. 
+$URL_SafeSpecificMember = $URL_PVWABaseAPI + "/Safes"+ "/{0}" + "/Members/{1}"
 # users
 $url_users = $URL_PVWAAPI+"/Users"
 
-$useActiveDirectory = $true
-if ($null -eq (Get-Module -Name "ActiveDirectory")) {
-    write-host "This script uses the ActiveDirectory powershell module to read properties from live mailboxes"
-    $useActiveDirectory = $false
+$useActiveDirectory = ($null -ne (Get-Module -Name "ActiveDirectory"))
+if (!$useActiveDirectory) {
+    write-logMessage -Type Warning -Msg "Missing: ActiveDirectory powershell Module. This script uses the ActiveDirectory powershell module to read properties from live mailboxes. Will attempt to use CyberArk user properties to populate safe name properties."    
+} else {
+    if ($null -eq $(get-command -name "get-adUser")) {
+        Import-Module -name ActiveDirectory
+    }
 }
 
 
@@ -726,7 +930,7 @@ if ($null -eq $mgmtAdminUser) {
 }
 
 # Capture CyberArk admin credentials and set global:header variable. 
-Get-LogonHeader
+Get-LogonHeader -Credentials $Credentials
 $allSafes = get-Safes
 if ($null -eq $allSafes) {
     return "failed to pull safes from CyberArk."
@@ -737,49 +941,57 @@ forEach ($UserSMTP in $NewUserSMTP ) {
     # Find User Object in Active Directory to grab user object. 
     if ($useActiveDirectory) {
         $newuser = Get-ADUser -Server $defaultDomain -Filter $filterString # -Credential $mgmtAdminUser    
-    } else {
-        $newUser = get-SpoofedADUser -SafeUser $UserSMTP
+    } 
+    
+    if (!$useActiveDirectory -or $null -eq $newUser ) {
+        write-verbose "Couldn't find in AD, searching active user accounts in CyberArk for $userSMTP"
+        $newUser = get-SpoofedADUser -SafeUser $UserSMTP        
     }
 
-    #Build SafeName from the AD Object properties.
-    $SafeName = "P-"+$newuser.GivenName+"_"+$newuser.Surname;
-    #$SafeExists = & '.\Safe Management\Safe-Management.ps1' -PVWAURL $pvWAURL -List -SafeName $safeName -ErrorAction SilentlyContinue
+    if ($null -ne $newUser ) {
+        #Build SafeName from the user Object properties.
+        $SafeName = "P-"+$newuser.GivenName+"_"+$newuser.Surname;
+        write-logMessage -Type Info -Msg "Createing a new safe: $SafeName"
+        #See if safe already exists with this safeName value
+        $SafeExists = $AllSafes.safename -eq $SafeName
+        if ($null -eq $SafeExists)  {
+            # Create new Safe For user.
+            
+            #Look for lowest population CPM server. 
+            $ManagingCPMArray = $allSafes | Where-Object {$_.managingCPM -like "CDT*"} | group-object managingCPM -NoElement | Sort-Object count 
+            $lowestPopManagingCPM = $ManagingCPMArray[0].name
+            
+            write-logMessage -Type Info -Msg "Creating new safe for $($newuser.UserPrincipalName) with safe name of $SafeName on $lowestPopManagingCPM"
+            # Create new user's safe 
+            New-Safe -SafeName $safeName -ManagingCPM $lowestPopManagingCPM  -safeDescription "Private User Safe"                
+            do {
+                #sit and wait for replication
+                # Issue where the global variable isn't getting set when the new safe is created. Easier to rebuild the 
+                $g_SafesList = $null;
+                $allSafes = get-safes    
+            } while ($null -eq ($allsafes.safename -eq $safename))
+        } else {
+            write-logMessage -Type Info -Msg "Note:: Safe name $SafeName already exists."
+        }
 
-    #See if safe already exists with this safeName value
-    $SafeExists = $AllSafes | Where-Object {$_.safename -eq $SafeName}
-    if ($null -eq $SafeExists)  {
-        # Create new Safe For user.
-        
-        #Look for lowest population CPM server. 
-        $ManagingCPMArray = $allSafes | Where-Object {$_.managingCPM -like "CDT*"} | group-object managingCPM -NoElement | Sort-Object count 
-        $lowestPopManagingCPM = $ManagingCPMArray[0].name
-        
-        write-host "Creating new safe for",$newuser.UserPrincipalName,"with safe name of",$SafeName,"on",$lowestPopManagingCPM
-        # Create new user's safe 
-        New-Safe -SafeName $safeName -ManagingCPM $lowestPopManagingCPM  -safeDescription "Private User Safe"    
-        $g_SafesList = $null;
-        do {
-            #sit and wait for replication
-            # Issue where the global variable isn't getting set when the new safe is created. Easier to rebuild the 
-            $allSafes = get-safes    
-        } while ($null -eq ($allsafes.safename -eq $safename))
+        #Grab existing safe members
+        $safeMembers = Get-SafeMembers -safeName $SafeName
+
+        #Don't do ADD accpimt of alread there. 
+        if (!($safemembers.membername -contains $newuser.UserPrincipalName )) {
+            # Add current AD user as a member of their own safe. 
+            write-logMessage -Type Info -Msg "Adding $($newuser.UserPrincipalName) as owner to safe $SafeName"
+            Set-MemberRole -safeName $SafeName -SafeUser $newuser.UserPrincipalName -memberRole $MemberRole               
+        } else {
+            #update role if already there.. 
+            write-logMessage -Type Info -Msg "Updating existing member permissions to $MemberRole"
+            Set-MemberRole -safeName $SafeName -SafeUser $newuser.UserPrincipalName -memberRole $MemberRole -updateMember
+        }
+        # Set-MemberRole -safeName $SafeName -SafeUser "cdt_admin" -memberRole "cdt_admin" -updateMember
+        Get-SafeMembers -safeName $SafeName | where-object {$_.memberName -eq $newuser.UserPrincipalName} | convertto-json   
     } else {
-        write-host "Note:: Safe name",$SafeName,"already exists."
+        write-host $("ERROR: User not found: "+$userSMTP)
     }
-
-    #Grab existing safe members
-    $safeMembers = Get-SafeMembers -safeName $SafeName
-
-    #Don't do ADD accpimt of alread there. 
-    if (!($safemembers.membername -contains $newuser.UserPrincipalName )) {
-        # Add current AD user as a member of their own safe. 
-        Set-MemberRole -safeName $SafeName -SafeUser $newuser.UserPrincipalName -memberRole $MemberRole               
-    } else {
-        #update role if already there.. 
-        Set-MemberRole -safeName $SafeName -SafeUser $newuser.UserPrincipalName -memberRole $MemberRole -updateMember
-    }
-    Set-MemberRole -safeName $SafeName -SafeUser "CDT_Admin" -memberRole "CDT_Admin" -updateMember
-    $safemembers | where-object {$_.membername -eq $newuser.UserPrincipalName} | convertto-json   
 }
 Invoke-Logoff
 
