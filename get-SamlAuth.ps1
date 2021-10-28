@@ -11,7 +11,7 @@ Function Get-AADToken {
         .PARAMETER OMSConnection
             Object that contains all needed parameters for working
             with OMSSearch Module. You can create such object in 
-            OMS Automation as connection asset.
+            OMS Automation as connection asset.-
     
         .PARAMETER TenantADName
             Valid Azure AD Tenant name. 
