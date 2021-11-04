@@ -158,14 +158,14 @@ Function Get-AADToken {
         }
     
         Return $Token
-    }
+}
 
 
 $TenantId = '52b26be4-7f5d-4e1c-baed-8cf75b7570d5'
 $subscriptionId = '7abf4c7a-8dbd-4d80-b693-50379774fbeb'
 $userName = 'eric.woodford@state.ca.gov'
 
-$pw = ConvertTo-SecureString -String 'Sma11W00denguy' -AsPlainText -Force
+$pw = ConvertTo-SecureString -String 'lyjftcbhbzzxsnkq' -AsPlainText -Force  # using an app password generated in my o365 profile
 $AzureAdminCred = New-Object System.Management.Automation.PSCredential($userName, $pw)
 $Token = Get-AADToken -TenantID $TenantId -Credential $AzureAdminCred
 
@@ -173,7 +173,7 @@ $Token = Get-AADToken -TenantID $TenantId -Credential $AzureAdminCred
 
   
   $RESTAPIHeaders = @{'Authorization'=$Token;'Accept'='application/json'}
-  $URI = "https://management.azure.com/subscriptions<a href="https://management.azure.com/subscriptions/">/</a>$subscriptionId/resourceGroups?api-version=2014-04-01"
+  $URI = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups?api-version=2014-04-01"
   $GetResourceGroupsRequest = Invoke-WebRequest -UseBasicParsing -Uri $URI -Method GET -Headers $RESTAPIHeaders
 
 
