@@ -1,6 +1,5 @@
 <#
-    Creates CyberArk vaults based off AD Accounts
-    
+    Creates group CyberArk vaults with multiple members.     
 #>
 
 
@@ -12,11 +11,15 @@ Param
     [System.Management.Automation.CredentialAttribute()]$Credentials,
     
     [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
-    [string]$SafeName,    
+    [string]$SafeName,  
+    [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
+    [string]$SafeDescription,     
     [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
     [string[]]$MemberSMTP,
     [Parameter(Mandatory = $false, ValueFromPipelineByPropertyName = $true)]
-    [string]$MemberRole = "Owner"    
+    [string]$MemberRole = "Owner",
+    [Parameter(Mandatory = $false)]
+    [switch]$AimUser    
 )
 
 
@@ -306,7 +309,8 @@ Function New-Safe {
         #Set-Variable -Name g_SafesList -Value $null -Scope Global
         # Update Safes list to include new safe
         #Get-Safes | out-null
-        $g_SafesList += $safeAdd.AddSafeResult
+        $g_SafesList += $safeAdd
+        return $safeAdd
     }
     catch
     {
@@ -314,6 +318,36 @@ Function New-Safe {
     }
 }
 
+function remove-safe {
+    <#
+    .SYNOPSIS
+    Allows a user to create a new cyberArk safe
+
+    .DESCRIPTION
+    Creates a new cyberark safe
+
+    .EXAMPLE
+    New-Safe -safename "x0-Win-S-Admins" -safeDescription "Safe description goes here"
+
+    #>
+    [CmdletBinding()]
+    [OutputType()]
+    param (
+        [ValidateScript( { $_.Length -le 28 })]
+        [String]$safeName
+    )
+    $_safe = $null
+    try
+    {
+        $accSafeURL = $URL_SpecificSafe -f $(ConvertTo-URL $safeName)
+        $_safe = $(Invoke-RestMethod -Uri $accSafeURL -Method "DELETE" -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700) #-ErrorAction "SilentlyContinue").GetSafeResult
+    }
+    catch
+    {
+        Throw $(New-Object System.Exception ("Get-Safe: Error retrieving safe '$safename' details.", $_.Exception))
+    }	
+    return $_safe
+}
 
 Function Write-LogMessage {
     <#
@@ -505,7 +539,7 @@ Function Set-SafeMember {
         [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
         [bool]$permViewSafeMembers = $false,
         [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
-        [int]$permRequestsAuthorizationLevel = 0,
+        [int]$permRequestsAuthorizationLevel = $false,
         [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
         [bool]$permAccessWithoutConfirmation = $false,
         [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
@@ -518,36 +552,39 @@ Function Set-SafeMember {
 
     If ($safeMember -NotIn $g_DefaultUsers)
     {
+
+
         $SafeMembersBody = @{
-            member = @{
-                MemberName               = "$safeMember"
-                SearchIn                 = "$memberSearchInLocation"
-                MembershipExpirationDate = "$null"
-                Permissions              = @(
-                    @{Key = "UseAccounts"; Value = $permUseAccounts }
-                    @{Key = "RetrieveAccounts"; Value = $permRetrieveAccounts }
-                    @{Key = "ListAccounts"; Value = $permListAccounts }
-                    @{Key = "AddAccounts"; Value = $permAddAccounts }
-                    @{Key = "UpdateAccountContent"; Value = $permUpdateAccountContent }
-                    @{Key = "UpdateAccountProperties"; Value = $permUpdateAccountProperties }
-                    @{Key = "InitiateCPMAccountManagementOperations"; Value = $permInitiateCPMManagement }
-                    @{Key = "SpecifyNextAccountContent"; Value = $permSpecifyNextAccountContent }
-                    @{Key = "RenameAccounts"; Value = $permRenameAccounts }
-                    @{Key = "DeleteAccounts"; Value = $permDeleteAccounts }
-                    @{Key = "UnlockAccounts"; Value = $permUnlockAccounts }
-                    @{Key = "ManageSafe"; Value = $permManageSafe }
-                    @{Key = "ManageSafeMembers"; Value = $permManageSafeMembers }
-                    @{Key = "BackupSafe"; Value = $permBackupSafe }
-                    @{Key = "ViewAuditLog"; Value = $permViewAuditLog }
-                    @{Key = "ViewSafeMembers"; Value = $permViewSafeMembers }
-                    @{Key = "RequestsAuthorizationLevel"; Value = $permRequestsAuthorizationLevel }
-                    @{Key = "AccessWithoutConfirmation"; Value = $permAccessWithoutConfirmation }
-                    @{Key = "CreateFolders"; Value = $permCreateFolders }
-                    @{Key = "DeleteFolders"; Value = $permDeleteFolders }
-                    @{Key = "MoveAccountsAndFolders"; Value = $permMoveAccountsAndFolders }
-                )
-            }  
-        }
+            memberName               = "$safeMember"
+            searchIn                 = "$memberSearchInLocation"
+            membershipExpirationDate = "$null"
+            permissions              = @{
+                "useAccounts"= $permUseAccounts; 
+                "retrieveAccounts"= $permRetrieveAccounts;
+                "listAccounts"= $permListAccounts;
+                "addAccounts"= $permAddAccounts ;
+                "updateAccountContent"= $permUpdateAccountContent ;
+                "updateAccountProperties"= $permUpdateAccountProperties ;
+                "initiateCPMAccountManagementOperations"= $permInitiateCPMManagement ;
+                "specifyNextAccountContent"= $permSpecifyNextAccountContent ;
+                "renameAccounts"= $permRenameAccounts ;
+                "deleteAccounts"= $permDeleteAccounts ;
+                "unlockAccounts"= $permUnlockAccounts ;
+                "manageSafe"= $permManageSafe ;
+                "manageSafeMembers"= $permManageSafeMembers ;
+                "backupSafe"= $permBackupSafe ;
+                "viewAuditLog"= $permViewAuditLog ;
+                "viewSafeMembers"= $permViewSafeMembers ;
+                "requestsAuthorizationLevel1"= $false ;
+                "accessWithoutConfirmation"= $permAccessWithoutConfirmation ;
+                "createFolders"= $permCreateFolders ;
+                "deleteFolders"= $permDeleteFolders ;
+                "moveAccountsAndFolders"= $permMoveAccountsAndFolders ;
+            }
+        } 
+
+        #$SafeMembersBody | ConvertTo-Json -depth 5
+        $AddOnUpdate = $true
 
         try
         {
@@ -570,7 +607,7 @@ Function Set-SafeMember {
                 $urlSafeMembers = ($URL_SafeMembers -f $(ConvertTo-URL $safeName))
                 $restMethod = "POST"
             }
-            $null = Invoke-RestMethod -Uri $urlSafeMembers -Body ($safeMembersBody | ConvertTo-Json -Depth 5) -Method $restMethod -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700 -ErrorVariable rMethodErr
+           $capture = Invoke-RestMethod -Uri $urlSafeMembers -Body ($safeMembersBody | ConvertTo-Json -Depth 5) -Method $restMethod -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700 -ErrorVariable rMethodErr
         }
         catch
         {
@@ -588,7 +625,7 @@ Function Set-SafeMember {
                     $restMethod = "POST"
                     try
                     {
-                        $null = Invoke-RestMethod -Uri $urlSafeMembers -Body ($safeMembersBody | ConvertTo-Json -Depth 5) -Method $restMethod -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700 -ErrorVariable rMethodErr
+                        $Results = Invoke-RestMethod -Uri $urlSafeMembers -Body ($safeMembersBody | ConvertTo-Json -Depth 5) -Method $restMethod -Headers $g_LogonHeader -ContentType "application/json" -TimeoutSec 2700 -ErrorVariable rMethodErr
                     }
                     catch
                     {
@@ -632,16 +669,20 @@ Function Set-MemberRole {
     #End-user's Permissions configuration defined by CyberArk 
     $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permAddAccounts = $permUpdateAccountContent = $permUpdateAccountProperties = $permInitiateCPMManagement = `
         $permSpecifyNextAccountContent = $permRenameAccounts = $permDeleteAccounts = $permUnlockAccounts = $permManageSafe = $permManageSafeMembers = $permBackupSafe = $permViewAuditLog = `
-        $permViewSafeMembers = $permAccessWithoutConfirmation = $permCreateFolders = $permDeleteFolders = $permMoveAccountsAndFolders = $false
-    [int]$permRequestsAuthorizationLevel = 0
-    $UserLocation = get-directoryName
+        $permViewSafeMembers = $permAccessWithoutConfirmation = $permCreateFolders = $permDeleteFolders = $permMoveAccountsAndFolders = $permRequestsAuthorizationLevel = $false
+    $UserLocation = (get-directoryName).DomainName.toUpper()
     switch ($MemberRole) {
+        "Super" {
+            $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permAddAccounts = $permUpdateAccountContent = $permUpdateAccountProperties = $permInitiateCPMManagement = `
+            $permSpecifyNextAccountContent = $permRenameAccounts = $permDeleteAccounts = $permUnlockAccounts = $permManageSafe = $permManageSafeMembers = $permBackupSafe = $permViewAuditLog = `
+            $permViewSafeMembers = $permAccessWithoutConfirmation = $permCreateFolders = $permDeleteFolders = $permMoveAccountsAndFolders = $permRequestsAuthorizationLevel = $true
+        }
         "Admin"
         {
             $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permAddAccounts = $permUpdateAccountContent = $permUpdateAccountProperties = $permInitiateCPMManagement = `
                 $permSpecifyNextAccountContent = $permRenameAccounts = $permDeleteAccounts = $permUnlockAccounts = $permManageSafe = $permManageSafeMembers = $permBackupSafe = `
                 $permViewAuditLog = $permViewSafeMembers = $permAccessWithoutConfirmation = $permCreateFolders = $permDeleteFolders = $permMoveAccountsAndFolders = $true
-            $permRequestsAuthorizationLevel = 1
+            $permRequestsAuthorizationLevel = $false
         }
         "Auditor"
         {
@@ -654,22 +695,24 @@ Function Set-MemberRole {
         "Approver"
         {
             $permListAccounts = $permViewAuditLog = $permViewSafeMembers = $true
-            $permRequestsAuthorizationLevel = 1
+            $permRequestsAuthorizationLevel = $false
         }
         "Owner"
         {
             write-logMessage -Type Info -Msg "Granting owner role to $safeuser"
             $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permAddAccounts = $permUpdateAccountContent = $permUpdateAccountProperties = $permInitiateCPMManagement = $permSpecifyNextAccountContent = $permRenameAccounts = $permDeleteAccounts = $permUnlockAccounts = $permManageSafeMembers = $permViewAuditLog = $permViewSafeMembers = $permMoveAccountsAndFolders = $true
-            $permRequestsAuthorizationLevel = 1
+            $permRequestsAuthorizationLevel = $false
         }
         "cdt_admin" {
-            $permManageSafe = $permManageSafeMembers = $permBackupSafe = $permViewAuditLog =  $permViewSafeMembers = $true
+            $permUseAccounts = $permRetrieveAccounts = $permListAccounts = $permAddAccounts = $permUpdateAccountContent = $permUpdateAccountProperties = $permInitiateCPMManagement = `
+            $permSpecifyNextAccountContent = $permRenameAccounts = $permDeleteAccounts = $permUnlockAccounts = $permManageSafe = $permManageSafeMembers = $permBackupSafe = $permViewAuditLog = `
+            $permViewSafeMembers = $permAccessWithoutConfirmation = $permCreateFolders = $permDeleteFolders = $permMoveAccountsAndFolders = $permRequestsAuthorizationLevel = $permManageSafe = $permManageSafeMembers = $permBackupSafe = $permViewAuditLog =  $permViewSafeMembers = $true
             $UserLocation = "Vault"
         }
-    }#
-    $alreadyMember = (Get-SafeMembers -safeName $safename).membername -eq $safeuser
+    }# 
+    $alreadyMember = (Get-SafeMembers -safeName $safename) | where-object {$_.membername -eq $safeuser}
     if ($null -eq $alreadyMember) {
-        write-logMessage -Type Info -Msg "Adding new member to $SafeName"
+        write-logMessage -Type Info -Msg $("Adding $safeUser to $SafeName")
         Set-SafeMember -safename $SafeName -safeMember $SafeUser -memberSearchInLocation $UserLocation `
             -permUseAccounts $permUseAccounts -permRetrieveAccounts $permRetrieveAccounts -permListAccounts $permListAccounts `
             -permAddAccounts $permAddAccounts -permUpdateAccountContent $permUpdateAccountContent -permUpdateAccountProperties $permUpdateAccountProperties `
@@ -680,7 +723,7 @@ Function Set-MemberRole {
             -permRequestsAuthorizationLevel $permRequestsAuthorizationLevel -permAccessWithoutConfirmation $permAccessWithoutConfirmation `
             -permCreateFolders $permCreateFolders -permDeleteFolders $permDeleteFolders -permMoveAccountsAndFolders $permMoveAccountsAndFolders
     } else {
-        write-logMessage -Type Info -Msg "Updating member on $SafeName"
+        write-logMessage -Type Info -Msg $("Updating $safeUser to $SafeName")
         Set-SafeMember -safename $SafeName -safeMember $SafeUser -memberSearchInLocation $UserLocation `
         -permUseAccounts $permUseAccounts -permRetrieveAccounts $permRetrieveAccounts -permListAccounts $permListAccounts `
         -permAddAccounts $permAddAccounts -permUpdateAccountContent $permUpdateAccountContent -permUpdateAccountProperties $permUpdateAccountProperties `
@@ -739,12 +782,6 @@ Function Encode-URL($sText)
 }
 
 
-# @FUNCTION@ ======================================================================================================================
-# Name...........: ConvertTo-URL
-# Description....: HTTP Encode test in URL
-# Parameters.....: Text to encode
-# Return Values..: Encoded HTML URL text
-# =================================================================================================================================
 Function ConvertTo-URL($sText) {
     <#
     .SYNOPSIS
@@ -766,9 +803,10 @@ Function ConvertTo-URL($sText) {
 }
 
 function get-directoryName {
+    #Locates the first LDAP directory integrations. Returns the object. 
     $URL_Directory = $URL_PVWAAPI + "/Configuration/LDAP/Directories/"
     $directories = Invoke-RestMethod -Uri $URL_Directory -Headers $g_LogonHeader -Method GET 
-    if ($directories.count -eq 1) {return $directories[0].DomainName}
+    if ($directories.count -eq 1) {return $directories[0]}
 }
 
 function get-CAUser {
@@ -778,6 +816,7 @@ function get-CAUser {
         [Parameter(Mandatory = $false)]
         [int]$limit=10
     )
+    #Get CyberArk user accounts that are found in the CyberArk vault. Does not return LDAP accounts.
 
     try {
         $UserURlwithNameFilter = ""
@@ -862,21 +901,45 @@ Function Get-SafeMembers {
     return $_safeOwners
 }
 
-Function Convert-ToBool {
-    param (
-        [string]$txt
-    )
-    $retBool = $false
-	
-    if ([bool]::TryParse($txt, [ref]$retBool))
-    {
-        # parsed to a boolean
-        return [System.Convert]::ToBoolean($txt)
+Function Get-CyberArkGroupMembers {
+    if ($null -eq (get-command "get-adgroup" -erroraction SilentlyContinue)) {return "needs ActiveDirectory module to add group membership"}    
+    $adGroup = get-adgroup -server $defaultDomain -identity "CyberArk-EndUsers"
+    if ($null -eq $adgroup ) {        
+        return $null
     }
-    else
-    {
-        write-logMessage -Type Error -Msg "The input ""$txt"" is not in the correct format (true/false), defaulting to False"
-        return $false
+    if ($null -eq $g_ADGroupMembers) {
+        write-verbose "reading ad group"
+        $FoundADGroupMembers = Get-ADGroupMember -Identity $adgroup.DistinguishedName -Server $defaultDomain | foreach {Get-ADUser -identity $_.DistinguishedName -server $defaultDomain}
+        Set-Variable -name g_ADGroupMembers -value $FoundADGroupMembers -scope global -description "Existing members of the LDAP group"
+        return $g_ADGroupMembers
+    } else {return $g_ADGroupMembers}
+}
+
+function Update-CyberArkEndUsersMembers {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$userSmtp,        
+        [Parameter(Mandatory = $false)]
+        [System.Management.Automation.CredentialAttribute()]$adCredential
+    )
+    # checks to see if the userSMTP entry is a member of the LDAP auth group. 
+    if ($null -eq (get-command "get-adgroup" -erroraction SilentlyContinue)) {return "needs ActiveDirectory module to add group membership"}    
+    $capture = Get-CyberArkGroupMembers
+    $newuser = Get-ADUser -Server $defaultDomain -Filter $filterString 
+
+    $existingMembers = $g_ADGroupMembers | ?{$_.distinguishedname -eq $newuser.distinguishedname}
+    if ($null -eq $newUser) {
+        write-host "#couldn't find $usersmtp"
+    } elseif ($null -eq $existingMembers) {
+        write-host "#need to add $userSMTP to 'CyberArk-EndUsers'"
+        if ($null -eq $adCredential) {
+            write-host $("Add-ADGroupMember -Identity '"+$adGroup.DistinguishedName+"' -Members '"+$newuser.DistinguishedName+"' -Server '"+$defaultDomain+"' -Credential `$adCredential")    
+        } else {
+            Add-ADGroupMember -Identity $adGroup.DistinguishedName -Members $newuser.DistinguishedName -Server $defaultDomain -Credential $adCredential
+            $g_ADGroupMembers = $null
+        }
+    } else {
+        write-verbose "$userSMTP already in 'CyberArk-EndUsers'"
     }
 }
 
@@ -919,6 +982,8 @@ $URL_SafeSpecificMember = $URL_PVWABaseAPI + "/Safes"+ "/{0}" + "/Members/{1}"
 # users
 $url_users = $URL_PVWAAPI+"/Users"
 
+
+# Set boolean based on if ActiveDirectory tools are installed on local machine. 
 $useActiveDirectory = ($null -ne (Get-Module -Name "ActiveDirectory"))
 if (!$useActiveDirectory) {
     write-logMessage -Type Warning -Msg "Missing: ActiveDirectory powershell Module. This script uses the ActiveDirectory powershell module to read properties from live mailboxes. Will attempt to use CyberArk user properties to populate safe name properties."    
@@ -940,28 +1005,33 @@ if ($null -eq $allSafes) {
     return "failed to pull safes from CyberArk."
 }
 
-$SafeExists = $AllSafes.safename -eq $SafeName
+$SafeExists = $AllSafes | ?{$_.safename -eq $SafeName}
 if ($null -eq $SafeExists)  {
     # Create new Safe For user.
     
     #Look for lowest population CPM server. 
-    $ManagingCPMArray = $allSafes | Where-Object {$_.managingCPM -like "CDT*"} | group-object managingCPM -NoElement | Sort-Object count 
+    $ManagingCPMArray = $allSafes | Where-Object {$_.managingCPM -like "CDT*" -and $_.managingCPM -notlike "*,*"} | group-object managingCPM -NoElement | Sort-Object count 
     $lowestPopManagingCPM = $ManagingCPMArray[0].name
     
     write-logMessage -Type Info -Msg "Creating new safe for $($newuser.UserPrincipalName) with safe name of $SafeName on $lowestPopManagingCPM"
     # Create new user's safe 
-    New-Safe -SafeName $safeName -ManagingCPM $lowestPopManagingCPM  -safeDescription "Private User Safe"                
+    New-Safe -SafeName $safeName -ManagingCPM $lowestPopManagingCPM  -safeDescription $SafeDescription               
     do {
         #sit and wait for replication
         # Issue where the global variable isn't getting set when the new safe is created. Easier to rebuild the 
+        write-host "." -nonewline   
         $g_SafesList = $null;
-        $allSafes = get-safes    
-    } while ($null -eq ($allsafes.safename -eq $safename))
+        $allSafes = get-safe -safename $safename 
+    } while ($null -eq ($AllSafes | Where-Object{$_.safename -eq $SafeName}))
 } else {
     write-logMessage -Type Info -Msg "Note:: Safe name $SafeName already exists."
 }
 
-forEach ($UserSMTP in $NewUserSMTP ) {
+$newSafe = get-safe -safename $safename
+if($Credentials.username -ne "cdt_admin") {
+    Set-MemberRole -safeName $($newSafe.safeUrlId)  -SafeUser "cdt_admin" -memberRole "cdt_admin" -updateMember
+}
+forEach ($UserSMTP in $MemberSMTP ) {
     $filterString = "userprincipalname -eq '"+$UserSMTP+"'"
     # Find User Object in Active Directory to grab user object. 
     if ($useActiveDirectory) {
@@ -973,31 +1043,33 @@ forEach ($UserSMTP in $NewUserSMTP ) {
         $newUser = get-SpoofedADUser -SafeUser $UserSMTP        
     }
 
-    if ($null -ne $newUser ) {
-        #Build SafeName from the user Object properties.
-        #$SafeName = "P-"+$newuser.GivenName+"_"+$newuser.Surname;
-        write-logMessage -Type Info -Msg "Createing a new safe: $SafeName"
-        #See if safe already exists with this safeName value
-
-
+    #Add Safe Members.
+    if ($null -ne $newUser ) {       
+        
         #Grab existing safe members
         $safeMembers = Get-SafeMembers -safeName $SafeName
 
-        #Don't do ADD accpimt of alread there. 
+        #Don't do ADD account of alread there. 
         if (!($safemembers.membername -contains $newuser.UserPrincipalName )) {
             # Add current AD user as a member of their own safe. 
             write-logMessage -Type Info -Msg "Adding $($newuser.UserPrincipalName) as owner to safe $SafeName"
-            Set-MemberRole -safeName $SafeName -SafeUser $newuser.UserPrincipalName -memberRole $MemberRole               
+            Set-MemberRole -safeName $($newSafe.safeUrlId) -SafeUser $newuser.UserPrincipalName -memberRole $MemberRole               
+           
         } else {
             #update role if already there.. 
             write-logMessage -Type Info -Msg "Updating existing member permissions to $MemberRole"
-            Set-MemberRole -safeName $SafeName -SafeUser $newuser.UserPrincipalName -memberRole $MemberRole -updateMember
+            Set-MemberRole -safeName $($newSafe.safeUrlId)  -SafeUser $newuser.UserPrincipalName -memberRole $MemberRole -updateMember
         }
-        # Set-MemberRole -safeName $SafeName -SafeUser "cdt_admin" -memberRole "cdt_admin" -updateMember
-        Get-SafeMembers -safeName $SafeName | where-object {$_.memberName -eq $newuser.UserPrincipalName} | convertto-json   
+    
     } else {
         write-host $("ERROR: User not found: "+$userSMTP)
     }
+}
+
+if ($AimUser) {
+    Set-MemberRole -safeName $($newSafe.safeUrlId)  -SafeUser "AIMWebService" -memberRole "EndUser" -updateMember
+    Set-MemberRole -safeName $($newSafe.safeUrlId)  -SafeUser "Orch-Test" -memberRole "EndUser" -updateMember
+    Set-MemberRole -safeName $($newSafe.safeUrlId)  -SafeUser "Prov_CDTAARKVMWAPP03P" -memberRole "EndUser" -updateMember
 }
 Invoke-Logoff
 

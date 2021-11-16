@@ -967,7 +967,7 @@ function Get-personalSafeStatus {
             if ($missing) {
                 $safeResult = $newUser.UserPrincipalName
             } else {
-                $safeResult = @{"UserSmtp"=$newUser.userprincipalname;"safeName"=$safeName;"exists"=$SafeExists}
+                $safeResult = @{"UserSmtp"=$newUser.userprincipalname;"safeName"=$safeName;"exists"=$SafeExists;"dn"=$newuser.DistinguishedName}
             }            
             $SafeLookup += $safeResult
         }
