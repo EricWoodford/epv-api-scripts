@@ -15,7 +15,10 @@ Param
     [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
     [string[]]$NewUserSMTP,
     [Parameter(Mandatory = $false, ValueFromPipelineByPropertyName = $true)]
-    [string]$MemberRole = "Owner"    
+    [string]$MemberRole = "Owner",
+    [Parameter(Mandatory = $false)]
+    [switch]$generatReport,
+    [string]$MissingADUserReportFile = ".\addUsersToCyberArkEngineers.ps1"
 )
 
 
@@ -918,18 +921,20 @@ function Update-CyberArkEndUsersMembers {
         [System.Management.Automation.CredentialAttribute()]$adCredential
     )
     # checks to see if the userSMTP entry is a member of the LDAP auth group. 
-    if ($null -eq (get-command "get-adgroup" -erroraction SilentlyContinue)) {return "needs ActiveDirectory module to add group membership"}    
+    if ($null -eq (get-command "get-adgroup" -erroraction SilentlyContinue)) {return "needs ActiveDirectory module to add group membership"} 
+    $adGroup = get-adgroup -server $defaultDomain -identity "CyberArk-EndUsers"   
     $capture = Get-CyberArkGroupMembers
     $newuser = Get-ADUser -Server $defaultDomain -Filter $filterString 
 
     $existingMembers = $g_ADGroupMembers | ?{$_.distinguishedname -eq $newuser.distinguishedname}
     if ($null -eq $newUser) {
-        write-host "#couldn't find $usersmtp"
+        write-verbose "#couldn't find $usersmtp"
     } elseif ($null -eq $existingMembers) {
         write-host "#need to add $userSMTP to 'CyberArk-EndUsers'"
-        if ($null -eq $adCredential) {
-            write-host $("Add-ADGroupMember -Identity '"+$adGroup.DistinguishedName+"' -Members '"+$newuser.DistinguishedName+"' -Server '"+$defaultDomain+"' -Credential `$adCredential")    
-        } else {
+        if ($null -eq $adCredential -or $generateReport) {
+            $("Add-ADGroupMember -Identity '"+$adGroup.DistinguishedName+"' -Members '"+$newuser.DistinguishedName+"' -Server '"+$defaultDomain+"' -Credential `$adCredential")  | Out-File $MissingADUserReportFile -Append
+        } 
+        if ($null -ne $adCredential) {
             Add-ADGroupMember -Identity $adGroup.DistinguishedName -Members $newuser.DistinguishedName -Server $defaultDomain -Credential $adCredential
             $g_ADGroupMembers = $null
         }
@@ -1032,10 +1037,29 @@ if ($null -eq $mgmtAdminUser) {
 
 # Capture CyberArk admin credentials and set global:header variable. 
 Get-LogonHeader -Credentials $Credentials
-write-host "Status: reading all existing safes"
+write-verbose "Status: reading all existing safes"
 $allSafes = get-Safes
 if ($null -eq $allSafes) {
     return "failed to pull safes from CyberArk."
+}
+
+If ($generateReport) {
+    '#Run this script to add new CyberArk users to the end-user group.'| Out-File $MissingADUserReportFile -Force
+    '$adCredential = get-credential -message "Please enter the credentials for an account that can modify the Cyberark Engineers group"' | Out-File $MissingADUserReportFile -Append
+    forEach ($UserSMTP in $NewUserSMTP ) {        
+        $filterString = "userprincipalname -eq '"+$UserSMTP+"'"
+        # Find User Object in Active Directory to grab user object. 
+        if ($useActiveDirectory) {
+            $newuser = Get-ADUser -Server $defaultDomain -Filter $filterString # -Credential $mgmtAdminUser  
+            if ($null -ne $newUser ) {Update-CyberArkEndUsersMembers -userSMTP $newUser.userPrincipalName -adCredential $adCredential}
+        } 
+    }
+    if (test-path $MissingADUserReportFile) {
+        $ShortdateStr=(get-date).ToShortDateString().replace("/","-")
+        $zipName = $MissingADUserReportFile +"_"+$ShortdateStr +".zip"        
+        Compress-Archive -Path $MissingADUserReportFile -DestinationPath $zipName -Update  
+        if (Test-Path -Path $zipName) {Remove-Item $MissingADUserReportFile}
+    }
 }
 
 forEach ($UserSMTP in $NewUserSMTP ) {
@@ -1067,15 +1091,14 @@ forEach ($UserSMTP in $NewUserSMTP ) {
             write-logMessage -Type Info -Msg "Creating new safe for $($newuser.UserPrincipalName) with safe name of $SafeName on $lowestPopManagingCPM"
             # Create new user's safe 
             $NewSafeInfo = New-Safe -SafeName $safeName -ManagingCPM $lowestPopManagingCPM  -safeDescription "Private User Safe"   
-            write-host "waiting for replication:" -nonewline           
+            
             do {
                 #sit and wait for replication
                 # Issue where the global variable isn't getting set when the new safe is created. Easier to rebuild the 
-                write-host "." -nonewline   
+                # write-host "." -nonewline   
                 $g_SafesList = $null;
                 $allSafes = get-safe -safename $safename 
-            } while ($null -eq ($AllSafes | Where-Object{$_.safename -eq $SafeName}))
-            write-host "*"
+            } while ($null -eq ($AllSafes | Where-Object{$_.safename -eq $SafeName}))            
         } else {
             write-logMessage -Type Info -Msg "Note:Safe name $SafeName already exists."
         }
@@ -1104,3 +1127,5 @@ forEach ($UserSMTP in $NewUserSMTP ) {
 }
 Invoke-Logoff
 
+
+  
