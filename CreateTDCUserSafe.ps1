@@ -8,8 +8,6 @@
 [OutputType()]
 Param
 (
-    [Parameter(Mandatory = $true)]    
-    [System.Management.Automation.CredentialAttribute()]$Credentials,
     [Parameter(Mandatory = $false)]
     [System.Management.Automation.CredentialAttribute()]$AdCredential,
     [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
@@ -17,11 +15,14 @@ Param
     [Parameter(Mandatory = $false, ValueFromPipelineByPropertyName = $true)]
     [string]$MemberRole = "Owner",
     [Parameter(Mandatory = $false)]
-    [switch]$generatReport,
+    [switch]$generateReport,
     [string]$MissingADUserReportFile = ".\addUsersToCyberArkEngineers.ps1"
 )
 
-
+import-module ActiveDirectory
+$Credentials = .\get-aimpassword cdt_cyb_automation
+# $names = readstrings
+# .\createTdcUserSafe.ps1 -credentials $credentials -newUserSmtp $names 
 # Get Script Location 
 $ScriptFullPath = $MyInvocation.MyCommand.Path
 $ScriptLocation = Split-Path -Parent $ScriptFullPath
@@ -804,7 +805,7 @@ function get-directoryName {
     #Locates the first LDAP directory integrations. Returns the object. 
     $URL_Directory = $URL_PVWAAPI + "/Configuration/LDAP/Directories/"
     $directories = Invoke-RestMethod -Uri $URL_Directory -Headers $g_LogonHeader -Method GET 
-    if ($directories.count -eq 1) {return $directories[0]}
+    if ($directories.count -gt 1) {return $directories[0]} else {return $directories}
 }
 
 function get-CAUser {
@@ -924,6 +925,7 @@ function Update-CyberArkEndUsersMembers {
     if ($null -eq (get-command "get-adgroup" -erroraction SilentlyContinue)) {return "needs ActiveDirectory module to add group membership"} 
     $adGroup = get-adgroup -server $defaultDomain -identity "CyberArk-EndUsers"   
     $capture = Get-CyberArkGroupMembers
+    $filterString = "userprincipalname -eq '"+$UserSMTP+"'"
     $newuser = Get-ADUser -Server $defaultDomain -Filter $filterString 
 
     $existingMembers = $g_ADGroupMembers | ?{$_.distinguishedname -eq $newuser.distinguishedname}
@@ -1017,7 +1019,7 @@ $URL_SpecificSafe = $URL_Safes + "/{0}"
 $URL_SafeMembers = $URL_SpecificSafe + "/Members"
 # as of 10/19 the Update and Delete portion of set-safeMember function uses the old 1.0 API. 
 #$URL_SafeSpecificMember = $URL_PVWABaseAPI + "/Safes"+ "/{0}" + "/Members/{1}"
-$URL_SafeSpecificMember = $URL_SafeMembers + "/{1}"
+$URL_SafeSpecificMember = $URL_SafeMembers + "/{1}/"  # final '/' in url is important 
 # users
 $url_users = $URL_PVWAAPI+"/Users"
 
@@ -1026,14 +1028,10 @@ if (!$useActiveDirectory) {
     write-logMessage -Type Warning -Msg "Missing: ActiveDirectory powershell Module. This script uses the ActiveDirectory powershell module to read properties from live mailboxes. Will attempt to use CyberArk user properties to populate safe name properties."    
 } else {
     if ($null -eq $(get-command -name "get-adUser")) {
-        Import-Module -name ActiveDirectory
+        Import-Module -name ActiveDirectory -SkipEditionCheck
     }
 }
 
-
-if ($null -eq $mgmtAdminUser) {
-#    $mgmtAdminUser = get-credential -message "Need AdminUs$AdminUser to perform action.`n----------------------------------`nEnter mgmt account AdminUs$AdminUser plz:"
-}
 
 # Capture CyberArk admin credentials and set global:header variable. 
 Get-LogonHeader -Credentials $Credentials
@@ -1043,51 +1041,55 @@ if ($null -eq $allSafes) {
     return "failed to pull safes from CyberArk."
 }
 
-If ($generateReport) {
-    '#Run this script to add new CyberArk users to the end-user group.'| Out-File $MissingADUserReportFile -Force
-    '$adCredential = get-credential -message "Please enter the credentials for an account that can modify the Cyberark Engineers group"' | Out-File $MissingADUserReportFile -Append
-    forEach ($UserSMTP in $NewUserSMTP ) {        
-        $filterString = "userprincipalname -eq '"+$UserSMTP+"'"
-        # Find User Object in Active Directory to grab user object. 
-        if ($useActiveDirectory) {
-            $newuser = Get-ADUser -Server $defaultDomain -Filter $filterString # -Credential $mgmtAdminUser  
-            if ($null -ne $newUser ) {Update-CyberArkEndUsersMembers -userSMTP $newUser.userPrincipalName -adCredential $adCredential}
-        } 
-    }
-    if (test-path $MissingADUserReportFile) {
-        $ShortdateStr=(get-date).ToShortDateString().replace("/","-")
-        $zipName = $MissingADUserReportFile +"_"+$ShortdateStr +".zip"        
-        Compress-Archive -Path $MissingADUserReportFile -DestinationPath $zipName -Update  
-        if (Test-Path -Path $zipName) {Remove-Item $MissingADUserReportFile}
-    }
-}
+# ref: https://www.codeproject.com/articles/17582/three-ways-of-e-mail-address-validation-regex-smtp
+$regex =  "\w+([-+.]\w+)*@\w+([-.]\w+)*\.\w+([-.]\w+)*"
 
-forEach ($UserSMTP in $NewUserSMTP ) {
+forEach ($NewUserEntry in $($NewUserSMTP | Sort-Object -unique) ) {
+
+    # try to build user smtp email address 
+    if ($NewUserEntry -like "*,*@CIO") { # convert displayname to smtp
+        # displayname from emails provided
+        $UserNamePortion = $NewUserEntry.Split("@")[0]
+        $firstLast = $UserNamePortion.split(",")
+        $UserSMTP = $firstLast[1]+"."+$firstLast[0]+"@state.ca.gov"
+    } elseif ($NewUserEntry -match $regex) { 
+        # smtp address provided
+        $UserSMTP = $NewUserEntry} 
+    else {
+        # 'first last' provided
+        $UserSMTP = ($NewUserEntry.ToLower().split(" ") -join("."))+"@state.ca.gov"
+        Write-Verbose $UserSMTP
+    }
+
     $filterString = "userprincipalname -eq '"+$UserSMTP+"'"
     # Find User Object in Active Directory to grab user object. 
     if ($useActiveDirectory) {
         $newuser = Get-ADUser -Server $defaultDomain -Filter $filterString # -Credential $mgmtAdminUser  
-        if ($null -ne $newUser ) {Update-CyberArkEndUsersMembers -userSMTP $newUser.userPrincipalName -adCredential $adCredential}
+        if ($null -ne $newUser ) {Update-CyberArkEndUsersMembers -userSMTP $newUser.userPrincipalName -adCredential $adCredential} 
     } 
-    
-    if (!$useActiveDirectory -or $null -eq $newUser ) {
-        write-verbose "Couldn't find in AD, searching active user accounts in CyberArk for $userSMTP"
-        $newUser = get-SpoofedADUser -SafeUser $UserSMTP        
-    }
+   
+  # code not used - need object in AD to continue  
+  #  if (!$useActiveDirectory -or $null -eq $newUser ) {
+  #      write-verbose "Couldn't find in AD, searching active user accounts in CyberArk for $userSMTP"
+  #      $newUser = get-SpoofedADUser -SafeUser $UserSMTP        
+  #  }
 
+    # if user found in Active Directory, check for safe.
     if ($null -ne $newUser ) {
-        #Build SafeName from the user Object properties.
+                
         # build safename that doesn't contain any special characters.  P-FIRST_LAST
         $SafeName = $("P-"+$newuser.GivenName+"_"+$newuser.Surname) -replace '[^_-a-zA-Z0-9]', ''
         #See if safe already exists with this safeName value
         $SafeExists = $AllSafes | Where-Object{$_.safename -eq $SafeName}
+
+
         if ($null -eq $SafeExists)  {
             write-logMessage -Type Info -Msg "Createing a new safe: $SafeName"            
             # Create new Safe For user.            
             #Look for lowest population CPM server. 
             $ManagingCPMArray = $allSafes | Where-Object {$_.managingCPM -like "CDT*" -and $_.managingCPM -notlike "*,*"} | group-object managingCPM -NoElement | Sort-Object count 
             $lowestPopManagingCPM = $ManagingCPMArray[0].name
-            $ManagingCPMArray | %{Write-Verbose $([string]$_.count+":"+$_.name)}
+            $ManagingCPMArray | ForEach-Object{Write-Verbose $([string]$_.count+":"+$_.name)}
             write-logMessage -Type Info -Msg "Creating new safe for $($newuser.UserPrincipalName) with safe name of $SafeName on $lowestPopManagingCPM"
             # Create new user's safe 
             $NewSafeInfo = New-Safe -SafeName $safeName -ManagingCPM $lowestPopManagingCPM  -safeDescription "Private User Safe"   
@@ -1097,8 +1099,8 @@ forEach ($UserSMTP in $NewUserSMTP ) {
                 # Issue where the global variable isn't getting set when the new safe is created. Easier to rebuild the 
                 # write-host "." -nonewline   
                 $g_SafesList = $null;
-                $allSafes = get-safe -safename $safename 
-            } while ($null -eq ($AllSafes | Where-Object{$_.safename -eq $SafeName}))            
+                $FindNewSafe = get-safe -safename $NewSafeInfo.safeUrlId 
+            } while ($null -eq $FindNewSafe)
         } else {
             write-logMessage -Type Info -Msg "Note:Safe name $SafeName already exists."
         }
@@ -1110,13 +1112,13 @@ forEach ($UserSMTP in $NewUserSMTP ) {
         if (!($safemembers.membername -contains $newuser.UserPrincipalName )) {
             # Add current AD user as a member of their own safe. 
             write-logMessage -Type Info -Msg "Adding $($newuser.UserPrincipalName) as owner to safe $SafeName"
-            Set-MemberRole -safeName $($newSafe.safeUrlId) -SafeUser $newuser.UserPrincipalName -memberRole $MemberRole               
-           # Get-SafeMembers -safeName $SafeName | where-object {$_.memberName -eq $newuser.UserPrincipalName} | convertto-json   
+            Set-MemberRole -safeName $($newSafe.safeUrlId) -SafeUser $newuser.UserPrincipalName -memberRole $MemberRole                          
         } else {
             #update role if already there.. 
             write-logMessage -Type Info -Msg "Updating existing member permissions to $MemberRole"
             Set-MemberRole -safeName $($newSafe.safeUrlId)  -SafeUser $newuser.UserPrincipalName -memberRole $MemberRole -updateMember
         }
+
         if($Credentials.username -ne "cdt_admin") {
             Set-MemberRole -safeName $($newSafe.safeUrlId)  -SafeUser "cdt_admin" -memberRole "cdt_admin" -updateMember
         }
