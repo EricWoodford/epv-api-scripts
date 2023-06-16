@@ -1,3 +1,6 @@
+# pull the user account credentials from CyberArk web API
+
+
 param (
     [Parameter(Mandatory = $true,HelpMessage="The account name as shown in the Username field in the CyberArk UI")][string]$AuthUser="doesnotmatter", 
     [Parameter(Mandatory=$false,HelpMessage="Name of accessible safe that contains the credentials. The admin specified this in the CyberArk app.")][string] $safe="IO_Automation_API",

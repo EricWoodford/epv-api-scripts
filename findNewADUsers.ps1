@@ -1,3 +1,4 @@
+# return all new user accounts in Active Directory that were created in the last 30 days. 
 $Today = $(get-date).addDays(-30);$dateFilter ="created -gt '"+[string]$today.month+"/"+[string]$today.day+"/"+[string]$today.year+"'";
 write-verbose "filter:",$dateFilter
 $defaultDomain = "tdc.ad.teale.ca.gov"
